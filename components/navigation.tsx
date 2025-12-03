@@ -9,7 +9,7 @@ import { motion } from "framer-motion";
 
 export function Navigation() {
   const [user, setUser] = useState<any>(null);
-  const [isPremium, setIsPremium] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -22,13 +22,13 @@ export function Navigation() {
       setUser(user);
 
       if (user) {
-        // Check premium status
+        // Check admin status
         const { data: profile } = await supabase
           .from("users")
-          .select("is_premium")
+          .select("is_admin")
           .eq("id", user.id)
           .single();
-        setIsPremium(profile?.is_premium || false);
+        setIsAdmin(profile?.is_admin || false);
       }
     }
     getUser();
@@ -64,7 +64,7 @@ export function Navigation() {
                   <BookOpen className="w-5 h-5" />
                   <span className="hidden sm:inline">Content</span>
                 </Link>
-                {isPremium && (
+                {isAdmin && (
                   <Link
                     href="/admin"
                     className="flex items-center gap-2 text-charcoal-700 hover:text-charcoal-900 transition-colors"

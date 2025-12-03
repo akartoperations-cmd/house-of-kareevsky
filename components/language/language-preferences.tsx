@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Globe } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -20,6 +20,8 @@ export function LanguagePreferences({ userId }: LanguagePreferencesProps) {
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>(["en"]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  // Use ref to track previous state for proper rollback on error
+  const previousLanguagesRef = useRef<string[]>(["en"]);
 
   useEffect(() => {
     async function loadPreferences() {
@@ -34,6 +36,7 @@ export function LanguagePreferences({ userId }: LanguagePreferencesProps) {
 
       if (data && data.preferred_languages) {
         setSelectedLanguages(data.preferred_languages);
+        previousLanguagesRef.current = data.preferred_languages;
       }
       setIsLoading(false);
     }
@@ -41,23 +44,32 @@ export function LanguagePreferences({ userId }: LanguagePreferencesProps) {
     loadPreferences();
   }, [userId]);
 
-  const toggleLanguage = (code: string) => {
+  const toggleLanguage = async (code: string) => {
+    // Calculate the new language list first
+    let updated: string[] | null = null;
+
     setSelectedLanguages((prev) => {
+      // Store previous state in ref before updating
+      previousLanguagesRef.current = prev;
+
       if (prev.includes(code)) {
         // Can't unselect if it's the only one
         if (prev.length === 1) return prev;
-        const updated = prev.filter((lang) => lang !== code);
-        savePreferences(updated);
+        updated = prev.filter((lang) => lang !== code);
         return updated;
       } else {
-        const updated = [...prev, code];
-        savePreferences(updated);
+        updated = [...prev, code];
         return updated;
       }
     });
+
+    // Save preferences after state update, using the computed value
+    if (updated !== null) {
+      await savePreferences(updated);
+    }
   };
 
-  const savePreferences = async (languages: string[]) => {
+  const savePreferences = async (newLanguages: string[]) => {
     if (!userId) return;
 
     setIsSaving(true);
@@ -65,14 +77,16 @@ export function LanguagePreferences({ userId }: LanguagePreferencesProps) {
 
     const { error } = await supabase
       .from("users")
-      .update({ preferred_languages: languages })
+      .update({ preferred_languages: newLanguages })
       .eq("id", userId);
 
     if (error) {
       console.error("Error updating language preferences:", error);
-      // Revert on error
-      setSelectedLanguages(selectedLanguages);
+      // Revert to the previous state from ref (not stale closure)
+      setSelectedLanguages(previousLanguagesRef.current);
     } else {
+      // Update ref to current state on success
+      previousLanguagesRef.current = newLanguages;
       localStorage.setItem("language-preferences-set", "true");
     }
 

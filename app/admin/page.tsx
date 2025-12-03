@@ -12,16 +12,14 @@ export default async function AdminPage() {
     redirect("/auth/signin");
   }
 
-  // Check if user is admin (you can customize this logic)
-  // For now, we'll allow any authenticated user - you can add admin check later
+  // Check if user is admin
   const { data: profile } = await supabase
     .from("users")
-    .select("is_premium")
+    .select("is_admin")
     .eq("id", user.id)
     .single();
 
-  // Basic check - you might want to add an is_admin column later
-  const isAdmin = profile?.is_premium || false;
+  const isAdmin = profile?.is_admin || false;
 
   if (!isAdmin) {
     redirect("/content");
