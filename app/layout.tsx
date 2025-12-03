@@ -5,6 +5,7 @@ import { ReaderSettingsProvider } from "@/components/reader-settings/reader-sett
 import { ReaderSettingsModal } from "@/components/reader-settings/reader-settings-modal";
 import { Navigation } from "@/components/navigation";
 import { PWAInstallPrompt } from "@/components/pwa-install-prompt";
+import { Footer } from "@/components/footer";
 
 export const metadata: Metadata = {
   title: "Digital Sanctuary",
@@ -47,8 +48,13 @@ export default function RootLayout({
       <body>
         <ContentProtection />
         <ReaderSettingsProvider>
-          <Navigation />
-          {children}
+          <div className="flex flex-col min-h-screen">
+            <Navigation />
+            <div className="flex-1">
+              {children}
+            </div>
+            <Footer />
+          </div>
           <ReaderSettingsModal />
           <PWAInstallPrompt />
         </ReaderSettingsProvider>
