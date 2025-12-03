@@ -1,14 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Settings, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useReaderSettings } from "./reader-settings-provider";
+import { LanguagePreferences } from "@/components/language/language-preferences";
+import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 export function ReaderSettingsModal() {
   const [isOpen, setIsOpen] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
   const { settings, updateSettings } = useReaderSettings();
+
+  useEffect(() => {
+    async function getUserId() {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        setUserId(user.id);
+      }
+    }
+    getUserId();
+  }, []);
 
   const fontSizeOptions = [
     { value: "normal", label: "Normal" },
@@ -115,7 +129,7 @@ export function ReaderSettingsModal() {
                 </div>
 
                 {/* Theme */}
-                <div className="mb-6">
+                <div className="mb-8">
                   <label className="block text-sm font-medium text-charcoal-700 mb-3">
                     Theme
                   </label>
@@ -137,6 +151,13 @@ export function ReaderSettingsModal() {
                     ))}
                   </div>
                 </div>
+
+                {/* Language Preferences */}
+                {userId && (
+                  <div className="border-t border-sand-200 pt-6">
+                    <LanguagePreferences userId={userId} />
+                  </div>
+                )}
               </div>
             </motion.div>
           </>

@@ -10,6 +10,7 @@ interface Content {
   type: "text" | "audio" | "video";
   url: string;
   is_public: boolean;
+  language: string;
   created_at: string;
 }
 

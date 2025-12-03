@@ -4,11 +4,12 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter, usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
-import { Home, BookOpen, LogOut, User } from "lucide-react";
+import { Home, BookOpen, LogOut, User, Settings } from "lucide-react";
 import { motion } from "framer-motion";
 
 export function Navigation() {
   const [user, setUser] = useState<any>(null);
+  const [isPremium, setIsPremium] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -19,6 +20,16 @@ export function Navigation() {
         data: { user },
       } = await supabase.auth.getUser();
       setUser(user);
+
+      if (user) {
+        // Check premium status
+        const { data: profile } = await supabase
+          .from("users")
+          .select("is_premium")
+          .eq("id", user.id)
+          .single();
+        setIsPremium(profile?.is_premium || false);
+      }
     }
     getUser();
   }, []);
@@ -53,6 +64,15 @@ export function Navigation() {
                   <BookOpen className="w-5 h-5" />
                   <span className="hidden sm:inline">Content</span>
                 </Link>
+                {isPremium && (
+                  <Link
+                    href="/admin"
+                    className="flex items-center gap-2 text-charcoal-700 hover:text-charcoal-900 transition-colors"
+                  >
+                    <Settings className="w-5 h-5" />
+                    <span className="hidden sm:inline">Admin</span>
+                  </Link>
+                )}
                 <button
                   onClick={handleSignOut}
                   className="flex items-center gap-2 text-charcoal-700 hover:text-charcoal-900 transition-colors"

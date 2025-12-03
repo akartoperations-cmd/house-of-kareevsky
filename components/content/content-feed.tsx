@@ -12,15 +12,17 @@ interface Content {
   type: "text" | "audio" | "video";
   url: string;
   is_public: boolean;
+  language: string;
   created_at: string;
 }
 
 interface ContentFeedProps {
   isPremium: boolean;
   userId: string;
+  preferredLanguages?: string[];
 }
 
-export function ContentFeed({ isPremium, userId }: ContentFeedProps) {
+export function ContentFeed({ isPremium, userId, preferredLanguages = ["en"] }: ContentFeedProps) {
   const [content, setContent] = useState<Content[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -42,15 +44,22 @@ export function ContentFeed({ isPremium, userId }: ContentFeedProps) {
 
       if (error) {
         console.error("Error fetching content:", error);
-      } else {
-        setContent(data || []);
+        setLoading(false);
+        return;
       }
 
+      // Filter by language preferences
+      // Show content if: language is 'universal' OR language is in user's preferred languages
+      const filteredContent = (data || []).filter((item) => {
+        return item.language === "universal" || preferredLanguages.includes(item.language);
+      });
+
+      setContent(filteredContent);
       setLoading(false);
     }
 
     fetchContent();
-  }, [isPremium]);
+  }, [isPremium, preferredLanguages]);
 
   if (loading) {
     return (
