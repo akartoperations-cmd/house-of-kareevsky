@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { ContentCard } from "./content-card";
 import { BlurredCard } from "./blurred-card";
@@ -25,15 +25,17 @@ interface ContentFeedProps {
 export function ContentFeed({ isPremium, userId, preferredLanguages = ["en"] }: ContentFeedProps) {
   const [content, setContent] = useState<Content[]>([]);
   const [loading, setLoading] = useState(true);
+  const feedEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     async function fetchContent() {
       const supabase = createClient();
       
+      // Sort by created_at ASCENDING - newest posts at bottom (like a chat)
       let query = supabase
         .from("content")
         .select("*")
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: true });
 
       // If not premium, only show public content
       if (!isPremium) {
@@ -61,13 +63,20 @@ export function ContentFeed({ isPremium, userId, preferredLanguages = ["en"] }: 
     fetchContent();
   }, [isPremium, preferredLanguages]);
 
+  // Scroll to bottom when content loads (newest at bottom)
+  useEffect(() => {
+    if (!loading && content.length > 0) {
+      feedEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [loading, content.length]);
+
   if (loading) {
     return (
       <div className="space-y-6">
         {[1, 2, 3].map((i) => (
           <div
             key={i}
-            className="h-64 bg-sand-200 animate-pulse rounded-lg"
+            className="h-48 bg-gradient-to-r from-sand-100 to-cream-100 animate-pulse rounded-3xl"
           />
         ))}
       </div>
@@ -76,22 +85,28 @@ export function ContentFeed({ isPremium, userId, preferredLanguages = ["en"] }: 
 
   if (content.length === 0) {
     return (
-      <div className="text-center py-12">
+      <div className="text-center py-16">
+        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-cream-100 flex items-center justify-center">
+          <span className="text-3xl">📭</span>
+        </div>
         <p className="text-charcoal-600 font-body text-lg">
           No content available yet.
+        </p>
+        <p className="text-charcoal-500 font-body text-sm mt-1">
+          Check back soon for new posts!
         </p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-8">
       {content.map((item, index) => (
         <motion.div
           key={item.id}
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: index * 0.1 }}
+          transition={{ duration: 0.4, delay: index * 0.08 }}
         >
           {isPremium || item.is_public ? (
             <ContentCard content={item} userId={userId} />
@@ -100,7 +115,9 @@ export function ContentFeed({ isPremium, userId, preferredLanguages = ["en"] }: 
           )}
         </motion.div>
       ))}
+      
+      {/* Scroll anchor for newest content */}
+      <div ref={feedEndRef} />
     </div>
   );
 }
-
