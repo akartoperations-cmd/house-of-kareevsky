@@ -1,11 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { ContentProtection } from "@/components/content-protection";
-import { ReaderSettingsProvider } from "@/components/reader-settings/reader-settings-provider";
-import { ReaderSettingsModal } from "@/components/reader-settings/reader-settings-modal";
-import { Navigation } from "@/components/navigation";
-import { PWAInstallPrompt } from "@/components/pwa-install-prompt";
-import { Footer } from "@/components/footer";
+import { ClientProviders } from "./providers/ClientProviders";
 
 export const metadata: Metadata = {
   title: "Digital Sanctuary",
@@ -46,18 +41,9 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-title" content="Digital Sanctuary" />
       </head>
       <body>
-        <ContentProtection />
-        <ReaderSettingsProvider>
-          <div className="flex flex-col min-h-screen">
-            <Navigation />
-            <div className="flex-1">
-              {children}
-            </div>
-            <Footer />
-          </div>
-          <ReaderSettingsModal />
-          <PWAInstallPrompt />
-        </ReaderSettingsProvider>
+        <ClientProviders>
+          {children}
+        </ClientProviders>
       </body>
     </html>
   );
