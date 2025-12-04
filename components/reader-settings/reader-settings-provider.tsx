@@ -15,6 +15,7 @@ interface ReaderSettings {
 interface ReaderSettingsContextType {
   settings: ReaderSettings;
   updateSettings: (settings: Partial<ReaderSettings>) => void;
+  mounted: boolean;
 }
 
 const defaultSettings: ReaderSettings = {
@@ -23,7 +24,11 @@ const defaultSettings: ReaderSettings = {
   theme: "light",
 };
 
-const ReaderSettingsContext = createContext<ReaderSettingsContextType | undefined>(undefined);
+const ReaderSettingsContext = createContext<ReaderSettingsContextType>({
+  settings: defaultSettings,
+  updateSettings: () => {},
+  mounted: false,
+});
 
 export function ReaderSettingsProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<ReaderSettings>(defaultSettings);
@@ -65,12 +70,9 @@ export function ReaderSettingsProvider({ children }: { children: React.ReactNode
     setSettings((prev) => ({ ...prev, ...newSettings }));
   };
 
-  if (!mounted) {
-    return <>{children}</>;
-  }
-
+  // Always render with provider - never return children without context
   return (
-    <ReaderSettingsContext.Provider value={{ settings, updateSettings }}>
+    <ReaderSettingsContext.Provider value={{ settings, updateSettings, mounted }}>
       {children}
     </ReaderSettingsContext.Provider>
   );
@@ -78,9 +80,6 @@ export function ReaderSettingsProvider({ children }: { children: React.ReactNode
 
 export function useReaderSettings() {
   const context = useContext(ReaderSettingsContext);
-  if (context === undefined) {
-    throw new Error("useReaderSettings must be used within a ReaderSettingsProvider");
-  }
   return context;
 }
 
