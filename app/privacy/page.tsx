@@ -27,7 +27,7 @@ export default function PrivacyPage() {
                 Introduction
               </h2>
               <p className="mb-4">
-                Privacy Policy for House of Kareevsky - Digital Sanctuary ("we," "our," or "us"). 
+                Privacy Policy for House of Kareevsky - Digital Sanctuary (&quot;we,&quot; &quot;our,&quot; or &quot;us&quot;). 
                 This Privacy Policy describes how we collect, use, and protect your personal information 
                 when you use our digital sanctuary platform for exclusive artistic content.
               </p>
@@ -102,7 +102,7 @@ export default function PrivacyPage() {
               </h2>
               <p className="mb-4">
                 We may update this Privacy Policy from time to time. We will notify you of any changes 
-                by posting the new Privacy Policy on this page and updating the "Last updated" date.
+                by posting the new Privacy Policy on this page and updating the &quot;Last updated&quot; date.
               </p>
             </section>
 

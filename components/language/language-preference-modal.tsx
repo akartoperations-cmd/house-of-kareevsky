@@ -87,7 +87,7 @@ export function LanguagePreferenceModal({ userId, onComplete }: LanguagePreferen
 
               <div className="mb-6">
                 <p className="text-sm text-charcoal-700 mb-4">
-                  Select the languages you'd like to see in your feed. You can change this anytime in settings.
+                  Select the languages you&apos;d like to see in your feed. You can change this anytime in settings.
                 </p>
                 <div className="space-y-2">
                   {availableLanguages.map((lang) => (

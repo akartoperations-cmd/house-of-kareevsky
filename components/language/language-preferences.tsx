@@ -111,7 +111,7 @@ export function LanguagePreferences({ userId }: LanguagePreferencesProps) {
         Language Preferences
       </label>
       <p className="text-xs text-charcoal-600 mb-3">
-        Select languages you'd like to see in your feed. Universal content (music, photos) always appears.
+        Select languages you&apos;d like to see in your feed. Universal content (music, photos) always appears.
       </p>
       <div className="space-y-2">
         {availableLanguages.map((lang) => (

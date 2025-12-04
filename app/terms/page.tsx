@@ -27,7 +27,7 @@ export default function TermsPage() {
                 Agreement to Terms
               </h2>
               <p className="mb-4">
-                Terms of Service for House of Kareevsky - Digital Sanctuary ("we," "our," or "us"). 
+                Terms of Service for House of Kareevsky - Digital Sanctuary (&quot;we,&quot; &quot;our,&quot; or &quot;us&quot;). 
                 By accessing or using our digital sanctuary platform, you agree to be bound by these 
                 Terms of Service. If you disagree with any part of these terms, you may not access 
                 the service.
