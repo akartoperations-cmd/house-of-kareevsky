@@ -53,7 +53,7 @@ export function LanguagePreferences({ userId }: LanguagePreferencesProps) {
       previousLanguagesRef.current = prev;
 
       if (prev.includes(code)) {
-        // Can't unselect if it's the only one
+        // Can&apos;t unselect if it&apos;s the only one
         if (prev.length === 1) return prev;
         updated = prev.filter((lang) => lang !== code);
         return updated;
@@ -87,7 +87,9 @@ export function LanguagePreferences({ userId }: LanguagePreferencesProps) {
     } else {
       // Update ref to current state on success
       previousLanguagesRef.current = newLanguages;
-      localStorage.setItem("language-preferences-set", "true");
+      if (typeof window !== "undefined") {
+        localStorage.setItem("language-preferences-set", "true");
+      }
     }
 
     setIsSaving(false);
@@ -95,7 +97,7 @@ export function LanguagePreferences({ userId }: LanguagePreferencesProps) {
 
   if (isLoading) {
     return (
-      <div className="mb-8">
+      <div className="mb-4">
         <label className="block text-sm font-medium text-charcoal-700 mb-3">
           Language Preferences
         </label>
@@ -105,15 +107,15 @@ export function LanguagePreferences({ userId }: LanguagePreferencesProps) {
   }
 
   return (
-    <div className="mb-8">
-      <label className="block text-sm font-medium text-charcoal-700 mb-3 flex items-center gap-2">
+    <div className="mb-4">
+      <label className="block text-sm font-medium text-charcoal-700 mb-2 flex items-center gap-2">
         <Globe className="w-4 h-4" />
         Language Preferences
       </label>
       <p className="text-xs text-charcoal-600 mb-3">
-        Select languages you&apos;d like to see in your feed. Universal content (music, photos) always appears.
+        Select languages for your feed. Universal content always appears.
       </p>
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         {availableLanguages.map((lang) => (
           <button
             key={lang.code}
@@ -123,7 +125,7 @@ export function LanguagePreferences({ userId }: LanguagePreferencesProps) {
               (selectedLanguages.length === 1 && selectedLanguages.includes(lang.code))
             }
             className={cn(
-              "w-full px-4 py-3 rounded-lg border-2 text-left transition-all flex items-center gap-3",
+              "w-full px-3 py-2 rounded-lg border-2 text-left transition-all flex items-center gap-2",
               selectedLanguages.includes(lang.code)
                 ? "border-bronze-400 bg-bronze-50"
                 : "border-sand-200 bg-white hover:border-sand-300",
@@ -133,21 +135,20 @@ export function LanguagePreferences({ userId }: LanguagePreferencesProps) {
                 : ""
             )}
           >
-            <span className="text-2xl">{lang.flag}</span>
+            <span className="text-xl">{lang.flag}</span>
             <div className="flex-1">
-              <div className="font-medium text-charcoal-900">{lang.name}</div>
-              <div className="text-xs text-charcoal-600">{lang.code.toUpperCase()}</div>
+              <div className="font-medium text-charcoal-900 text-sm">{lang.name}</div>
             </div>
             {selectedLanguages.includes(lang.code) && (
-              <div className="w-5 h-5 rounded-full bg-bronze-500 flex items-center justify-center">
-                <span className="text-white text-xs">✓</span>
+              <div className="w-4 h-4 rounded-full bg-bronze-500 flex items-center justify-center">
+                <span className="text-white text-[10px]">✓</span>
               </div>
             )}
           </button>
         ))}
       </div>
       {isSaving && (
-        <p className="text-xs text-charcoal-500 mt-2">Saving preferences...</p>
+        <p className="text-xs text-charcoal-500 mt-2">Saving...</p>
       )}
     </div>
   );

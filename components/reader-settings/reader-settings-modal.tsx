@@ -68,10 +68,11 @@ export function ReaderSettingsModal() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-lg mx-4"
+              className="fixed inset-4 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 z-50 sm:w-full sm:max-w-lg flex flex-col"
             >
-              <div className="bg-cream-50 rounded-2xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto">
-                <div className="flex items-center justify-between mb-6">
+              <div className="bg-cream-50 rounded-2xl shadow-2xl flex flex-col max-h-full sm:max-h-[85vh] overflow-hidden">
+                {/* Fixed Header */}
+                <div className="flex items-center justify-between p-6 pb-4 border-b border-sand-200 flex-shrink-0">
                   <h2 className="text-2xl font-heading text-charcoal-900">Reader Settings</h2>
                   <button
                     onClick={() => setIsOpen(false)}
@@ -81,83 +82,86 @@ export function ReaderSettingsModal() {
                   </button>
                 </div>
 
-                {/* Font Size */}
-                <div className="mb-8">
-                  <label className="block text-sm font-medium text-charcoal-700 mb-3">
-                    Font Size
-                  </label>
-                  <div className="flex gap-2">
-                    {fontSizeOptions.map((option) => (
-                      <button
-                        key={option.value}
-                        onClick={() => updateSettings({ fontSize: option.value })}
-                        className={cn(
-                          "flex-1 px-4 py-2 rounded-lg border-2 transition-all",
-                          settings.fontSize === option.value
-                            ? "border-bronze-400 bg-bronze-50 text-bronze-900"
-                            : "border-sand-200 bg-white text-charcoal-700 hover:border-sand-300"
-                        )}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
+                {/* Scrollable Content */}
+                <div className="flex-1 overflow-y-auto p-6 pt-4">
+                  {/* Font Size */}
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-charcoal-700 mb-3">
+                      Font Size
+                    </label>
+                    <div className="flex gap-2">
+                      {fontSizeOptions.map((option) => (
+                        <button
+                          key={option.value}
+                          onClick={() => updateSettings({ fontSize: option.value })}
+                          className={cn(
+                            "flex-1 px-3 py-2 rounded-lg border-2 transition-all text-sm",
+                            settings.fontSize === option.value
+                              ? "border-bronze-400 bg-bronze-50 text-bronze-900"
+                              : "border-sand-200 bg-white text-charcoal-700 hover:border-sand-300"
+                          )}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
 
-                {/* Font Style */}
-                <div className="mb-8">
-                  <label className="block text-sm font-medium text-charcoal-700 mb-3">
-                    Font Style
-                  </label>
-                  <div className="space-y-2">
-                    {fontStyleOptions.map((option) => (
-                      <button
-                        key={option.value}
-                        onClick={() => updateSettings({ fontStyle: option.value })}
-                        className={cn(
-                          "w-full px-4 py-3 rounded-lg border-2 text-left transition-all",
-                          settings.fontStyle === option.value
-                            ? "border-bronze-400 bg-bronze-50"
-                            : "border-sand-200 bg-white hover:border-sand-300"
-                        )}
-                      >
-                        <div className="font-medium text-charcoal-900">{option.label}</div>
-                        <div className="text-xs text-charcoal-600">{option.desc}</div>
-                      </button>
-                    ))}
+                  {/* Font Style */}
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-charcoal-700 mb-3">
+                      Font Style
+                    </label>
+                    <div className="space-y-2">
+                      {fontStyleOptions.map((option) => (
+                        <button
+                          key={option.value}
+                          onClick={() => updateSettings({ fontStyle: option.value })}
+                          className={cn(
+                            "w-full px-4 py-2.5 rounded-lg border-2 text-left transition-all",
+                            settings.fontStyle === option.value
+                              ? "border-bronze-400 bg-bronze-50"
+                              : "border-sand-200 bg-white hover:border-sand-300"
+                          )}
+                        >
+                          <div className="font-medium text-charcoal-900 text-sm">{option.label}</div>
+                          <div className="text-xs text-charcoal-600">{option.desc}</div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
 
-                {/* Theme */}
-                <div className="mb-8">
-                  <label className="block text-sm font-medium text-charcoal-700 mb-3">
-                    Theme
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {themeOptions.map((option) => (
-                      <button
-                        key={option.value}
-                        onClick={() => updateSettings({ theme: option.value })}
-                        className={cn(
-                          "px-4 py-3 rounded-lg border-2 transition-all",
-                          settings.theme === option.value
-                            ? "border-bronze-400 bg-bronze-50"
-                            : "border-sand-200 bg-white hover:border-sand-300"
-                        )}
-                      >
-                        <div className="font-medium text-charcoal-900">{option.label}</div>
-                        <div className="text-xs text-charcoal-600">{option.desc}</div>
-                      </button>
-                    ))}
+                  {/* Theme */}
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-charcoal-700 mb-3">
+                      Theme
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {themeOptions.map((option) => (
+                        <button
+                          key={option.value}
+                          onClick={() => updateSettings({ theme: option.value })}
+                          className={cn(
+                            "px-3 py-2.5 rounded-lg border-2 transition-all",
+                            settings.theme === option.value
+                              ? "border-bronze-400 bg-bronze-50"
+                              : "border-sand-200 bg-white hover:border-sand-300"
+                          )}
+                        >
+                          <div className="font-medium text-charcoal-900 text-sm">{option.label}</div>
+                          <div className="text-xs text-charcoal-600">{option.desc}</div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
 
-                {/* Language Preferences */}
-                {userId && (
-                  <div className="border-t border-sand-200 pt-6">
-                    <LanguagePreferences userId={userId} />
-                  </div>
-                )}
+                  {/* Language Preferences */}
+                  {userId && (
+                    <div className="border-t border-sand-200 pt-6">
+                      <LanguagePreferences userId={userId} />
+                    </div>
+                  )}
+                </div>
               </div>
             </motion.div>
           </>
@@ -166,4 +170,3 @@ export function ReaderSettingsModal() {
     </>
   );
 }
-
