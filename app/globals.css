@@ -1,0 +1,122 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Merriweather:wght@300;400;700&family=Cormorant+Garamond:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=Montserrat:wght@300;400;500;600;700&family=Courier+Prime:wght@400;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Content Protection - CRITICAL */
+* {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+/* Allow text selection only for readable content */
+article,
+.readable-content,
+[data-reader-content="true"] {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+  -ms-user-select: text !important;
+}
+
+/* Disable text selection on images and media */
+img,
+video,
+audio,
+[data-protected="true"] {
+  pointer-events: none;
+  -webkit-touch-callout: none;
+}
+
+@layer base {
+  body {
+    @apply bg-cream-50 text-charcoal-900 font-body antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-heading;
+  }
+}
+
+@layer utilities {
+  /* Reader Settings - Font Sizes */
+  .font-size-normal {
+    font-size: 1rem;
+    line-height: 1.75;
+  }
+
+  .font-size-large {
+    font-size: 1.125rem;
+    line-height: 1.8;
+  }
+
+  .font-size-extra-large {
+    font-size: 1.25rem;
+    line-height: 1.85;
+  }
+
+  /* Reader Settings - Font Styles */
+  .font-classic {
+    font-family: 'Merriweather', serif;
+  }
+
+  .font-elegant {
+    font-family: 'Cormorant Garamond', serif;
+  }
+
+  .font-modern {
+    font-family: 'Inter', sans-serif;
+  }
+
+  .font-fashion {
+    font-family: 'Montserrat', sans-serif;
+  }
+
+  .font-retro {
+    font-family: 'Courier Prime', monospace;
+  }
+
+  /* Reader Settings - Themes */
+  .theme-light {
+    @apply bg-cream-50 text-charcoal-900;
+  }
+
+  .theme-sepia {
+    @apply bg-cream-200 text-charcoal-800;
+  }
+
+  .theme-dark {
+    @apply bg-charcoal-900 text-cream-100;
+  }
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-cream-100;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-sand-400 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-sand-500;
+}
+
