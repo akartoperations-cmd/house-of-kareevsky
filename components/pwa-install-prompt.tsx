@@ -7,13 +7,21 @@ import { X, Download } from "lucide-react";
 export function PWAInstallPrompt() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showPrompt, setShowPrompt] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
+
     // Check if already installed
-    if (
+    const standalone = 
       window.matchMedia("(display-mode: standalone)").matches ||
-      (window.navigator as any).standalone === true
-    ) {
+      (window.navigator as any).standalone === true;
+    
+    setIsStandalone(standalone);
+
+    if (standalone) {
       return;
     }
 
@@ -31,10 +39,10 @@ export function PWAInstallPrompt() {
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
 
     // Check if iOS (which uses a different prompt)
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    const isStandalone = (window.navigator as any).standalone === true;
+    const iosDevice = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    setIsIOS(iosDevice);
 
-    if (isIOS && !isStandalone) {
+    if (iosDevice && !standalone) {
       // Show iOS install instructions after delay
       setTimeout(() => {
         setShowPrompt(true);
@@ -62,10 +70,8 @@ export function PWAInstallPrompt() {
     }
   };
 
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-  const isStandalone = (window.navigator as any).standalone === true;
-
-  if (!showPrompt || isStandalone) {
+  // Don't render anything during SSR or if already standalone
+  if (!mounted || !showPrompt || isStandalone) {
     return null;
   }
 
@@ -136,4 +142,3 @@ export function PWAInstallPrompt() {
     </AnimatePresence>
   );
 }
-
