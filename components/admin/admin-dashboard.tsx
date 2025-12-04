@@ -155,7 +155,7 @@ export function AdminDashboard({ userId }: AdminDashboardProps) {
             ))}
           </select>
           <p className="text-xs text-charcoal-500 mt-1">
-            Choose "Universal" for music, photos, or content that should appear to all users regardless of language.
+            Choose &quot;Universal&quot; for music, photos, or content that should appear to all users regardless of language.
           </p>
         </div>
 

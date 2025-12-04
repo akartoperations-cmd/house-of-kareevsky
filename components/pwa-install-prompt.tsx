@@ -116,8 +116,8 @@ export function PWAInstallPrompt() {
                   </p>
                   <ol className="list-decimal list-inside text-sm text-charcoal-600 space-y-1">
                     <li>Tap the Share button</li>
-                    <li>Scroll down and tap "Add to Home Screen"</li>
-                    <li>Tap "Add" to confirm</li>
+                    <li>Scroll down and tap &quot;Add to Home Screen&quot;</li>
+                    <li>Tap &quot;Add&quot; to confirm</li>
                   </ol>
                 </div>
               ) : (
