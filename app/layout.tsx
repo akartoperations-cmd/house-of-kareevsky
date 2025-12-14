@@ -1,50 +1,28 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { ClientProviders } from "./providers/ClientProviders";
 
 export const metadata: Metadata = {
-  title: "Digital Sanctuary",
-  description: "A quiet space for exclusive artistic content",
-  manifest: "/manifest.json",
-  icons: {
-    icon: "/icon-192.png",
-    apple: "/icon-192.png",
-  },
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "default",
-    title: "Digital Sanctuary",
-  },
-  viewport: {
-    width: "device-width",
-    initialScale: 1,
-    maximumScale: 1,
-    userScalable: false,
-  },
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#fdf8f4" },
-    { media: "(prefers-color-scheme: dark)", color: "#3d3d3d" },
-  ],
+  title: "House of Kareevsky",
+  description: "A private messenger-like home for stories, songs and letters",
 };
 
 export default function RootLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en">
       <head>
-        <link rel="manifest" href="/manifest.json" />
-        <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-        <meta name="apple-mobile-web-app-title" content="Digital Sanctuary" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;500&family=Inter:wght@400;500;600&display=swap"
+        />
       </head>
-      <body>
-        <ClientProviders>
-          {children}
-        </ClientProviders>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }
+
