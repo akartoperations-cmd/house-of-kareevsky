@@ -13,6 +13,7 @@ import {
   type Photo,
   type PersonalMessage,
 } from './lib/intimateMockData';
+import { AuthBar } from './components/AuthBar';
 
 type AdminMessage = {
   id: string;
@@ -163,10 +164,9 @@ const BRANDING = {
   tagline: 'Private Atelier • Complete Works • Vlog',
 };
 
-// Admin mode toggle (in real app, this would come from auth)
-const IS_ADMIN = true;
-
 export default function HomePage() {
+  const [isAdmin, setIsAdmin] = useState(false);
+
   const [activeView, setActiveView] = useState<View>('home');
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -404,6 +404,11 @@ export default function HomePage() {
   const closeMenu = () => setMenuOpen(false);
 
   const navigateTo = (view: View) => {
+    if ((view === 'create' || view === 'personal') && !isAdmin) {
+      showToast('Admin only.');
+      setMenuOpen(false);
+      return;
+    }
     if (view === 'write') {
       setAdminMessages((prev) => prev.map((m) => ({ ...m, isUnread: false })));
       setAdminInbox({ hasUnread: false, count: 0 });
@@ -422,6 +427,7 @@ export default function HomePage() {
   };
 
   const sendMessage = () => {
+    if (!isAdmin) return;
     const text = writeText.trim();
     if (!text) return;
     const newMessage: PersonalMessage = {
@@ -482,6 +488,7 @@ export default function HomePage() {
   };
 
   const handleCreateSave = () => {
+    if (!isAdmin) return;
     if (createTab === 'text') {
       if (!createTextTitle.trim() && !createTextBody.trim()) return;
       const newMsg: Message = {
@@ -539,6 +546,7 @@ export default function HomePage() {
   };
 
   const handleAddPhotoDaySave = () => {
+    if (!isAdmin) return;
     if (newPhotoDayFiles.length === 0) return;
     const today = new Date();
     const defaultDate = today.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -562,14 +570,6 @@ export default function HomePage() {
   };
 
   const hasUnreadAdminMessage = adminMessages.some((m) => m.isUnread);
-
-  const showEditToast = () => {
-    showToast('Edit will be connected to the backend later (mock).');
-  };
-
-  const showDeleteToast = () => {
-    showToast('Delete will be connected to the backend later (mock).');
-  };
 
   const renderWithDateDividers = <T extends { id: string; createdAt?: string }>(
     list: T[],
@@ -648,16 +648,22 @@ export default function HomePage() {
         })}
         <textarea
           className="write-view__textarea"
-          placeholder="What's on your mind..."
+          placeholder={isAdmin ? "What's on your mind..." : 'Sign in as admin to write.'}
           value={writeText}
-          onChange={(e) => setWriteText(e.target.value)}
+          onChange={(e) => {
+            if (!isAdmin) return;
+            setWriteText(e.target.value);
+          }}
+          disabled={!isAdmin}
         />
       </div>
-      <div className="write-view__footer">
-        <button className="write-view__send" onClick={sendMessage}>
-          Send
-        </button>
-      </div>
+      {isAdmin && (
+        <div className="write-view__footer">
+          <button className="write-view__send" onClick={sendMessage}>
+            Send
+          </button>
+        </div>
+      )}
     </div>
   );
 
@@ -851,25 +857,46 @@ export default function HomePage() {
     return null;
   };
 
-  const renderCreateView = () => (
-    <div className="app-container">
-      <header className="view-header">
-        <button className="view-header__back" onClick={goHome}>
-          {Icons.back}
-        </button>
-        <h1 className="view-header__title">New post</h1>
-      </header>
-      <div className="feed" style={{ paddingTop: '12px' }}>
-        {renderCreateTabs()}
-        {renderCreateContent()}
-        <div className="write-view__footer" style={{ background: 'transparent', borderTop: 'none' }}>
-          <button className="write-view__send" onClick={handleCreateSave}>
-            Save (mock)
+  const renderCreateView = () => {
+    if (!isAdmin) {
+      return (
+        <div className="app-container">
+          <header className="view-header">
+            <button className="view-header__back" onClick={goHome}>
+              {Icons.back}
+            </button>
+            <h1 className="view-header__title">New post</h1>
+          </header>
+          <div className="feed" style={{ paddingTop: '12px' }}>
+            <div className="empty-state">
+              <div className="empty-state__title">Admin only</div>
+              <div className="empty-state__subtitle">Sign in with the admin email to create posts.</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="app-container">
+        <header className="view-header">
+          <button className="view-header__back" onClick={goHome}>
+            {Icons.back}
           </button>
+          <h1 className="view-header__title">New post</h1>
+        </header>
+        <div className="feed" style={{ paddingTop: '12px' }}>
+          {renderCreateTabs()}
+          {renderCreateContent()}
+          <div className="write-view__footer" style={{ background: 'transparent', borderTop: 'none' }}>
+            <button className="write-view__send" onClick={handleCreateSave}>
+              Save (mock)
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderGalleryView = () => {
     const photoPostMessages = feedMessages.filter((m) => m.type === 'photo');
@@ -1181,6 +1208,11 @@ export default function HomePage() {
 
   return (
     <>
+      <AuthBar
+        onAuthState={(_nextSession, nextIsAdmin) => {
+          setIsAdmin(nextIsAdmin);
+        }}
+      />
       {renderView()}
 
       {menuOpen && (
@@ -1197,7 +1229,7 @@ export default function HomePage() {
                 <span className="bottom-sheet__icon">{Icons.audio}</span>
                 Audio
               </button>
-              {IS_ADMIN && (
+              {isAdmin && (
                 <button className="bottom-sheet__item" onClick={() => navigateTo('create')}>
                   <span className="bottom-sheet__icon">{Icons.write}</span>
                   New post
@@ -1220,10 +1252,11 @@ export default function HomePage() {
                 <span className="bottom-sheet__icon">{Icons.coffee}</span>
                 Treat
               </button>
-              {IS_ADMIN && (
+              {isAdmin && (
                 <button
                   className="bottom-sheet__item"
                   onClick={() => {
+                    if (!isAdmin) return;
                     setMenuOpen(false);
                     setAddPhotoDayOpen(true);
                   }}
@@ -1450,33 +1483,38 @@ export default function HomePage() {
               ))}
             </div>
             <div style={{ padding: '12px' }}>
-              <div style={{ marginBottom: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                Reply as Kareevsky
-              </div>
-              <textarea
-                value={commentReply}
-                onChange={(e) => setCommentReply(e.target.value)}
-                className="write-view__textarea"
-                style={{ minHeight: '80px', padding: '12px' }}
-                placeholder="Write a short reply..."
-              />
-              <div style={{ marginTop: '8px', textAlign: 'right' }}>
-                <button
-                  className="write-view__send"
-                  style={{ width: 'auto', padding: '8px 14px' }}
-                  onClick={() => {
-                    const text = commentReply.trim();
-                    if (!text) return;
-                    setComments((prev) => [
-                      ...prev,
-                      { id: `c-${Date.now()}`, author: 'Kareevsky', text },
-                    ]);
-                    setCommentReply('');
-                  }}
-                >
-                  Send
-                </button>
-              </div>
+              {isAdmin && (
+                <>
+                  <div style={{ marginBottom: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Reply as Kareevsky
+                  </div>
+                  <textarea
+                    value={commentReply}
+                    onChange={(e) => setCommentReply(e.target.value)}
+                    className="write-view__textarea"
+                    style={{ minHeight: '80px', padding: '12px' }}
+                    placeholder="Write a short reply..."
+                  />
+                  <div style={{ marginTop: '8px', textAlign: 'right' }}>
+                    <button
+                      className="write-view__send"
+                      style={{ width: 'auto', padding: '8px 14px' }}
+                      onClick={() => {
+                        if (!isAdmin) return;
+                        const text = commentReply.trim();
+                        if (!text) return;
+                        setComments((prev) => [
+                          ...prev,
+                          { id: `c-${Date.now()}`, author: 'Kareevsky', text },
+                        ]);
+                        setCommentReply('');
+                      }}
+                    >
+                      Send
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
