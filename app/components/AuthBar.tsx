@@ -1,24 +1,23 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { getSupabaseBrowserClient } from '@/app/lib/supabaseClient';
 
 type AuthBarProps = {
-  onAuthState: (session: Session | null, isAdmin: boolean) => void;
+  onAuthState: (session: Session | null, isAdmin: boolean, hasAdminEmail: boolean) => void;
 };
 
-const getAdminEmail = () => (process.env.NEXT_PUBLIC_ADMIN_EMAIL || '').trim().toLowerCase();
+type AdminState = { isAdmin: boolean; hasAdminEmail: boolean };
 
 export function AuthBar({ onAuthState }: AuthBarProps) {
   const [session, setSession] = useState<Session | null>(null);
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [adminState, setAdminState] = useState<AdminState>({ isAdmin: false, hasAdminEmail: true });
 
-  const adminEmail = useMemo(() => getAdminEmail(), []);
   const authedEmail = (session?.user?.email || '').trim().toLowerCase();
-  const isAdmin = Boolean(adminEmail) && authedEmail === adminEmail;
 
   useEffect(() => {
     let mounted = true;
@@ -48,8 +47,37 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
   }, []);
 
   useEffect(() => {
-    onAuthState(session, isAdmin);
-  }, [session, isAdmin, onAuthState]);
+    onAuthState(session, adminState.isAdmin, adminState.hasAdminEmail);
+  }, [session, adminState, onAuthState]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkAdminStatus = async () => {
+      try {
+        const res = await fetch('/api/admin/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: authedEmail || null }),
+        });
+        if (!res.ok) throw new Error('Failed admin status check');
+        const data = (await res.json()) as { hasAdminEmail?: boolean; isAdmin?: boolean };
+        if (cancelled) return;
+        setAdminState({
+          hasAdminEmail: Boolean(data?.hasAdminEmail),
+          isAdmin: Boolean(data?.isAdmin),
+        });
+      } catch {
+        if (cancelled) return;
+        setAdminState({ hasAdminEmail: false, isAdmin: false });
+      }
+    };
+
+    checkAdminStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [authedEmail]);
 
   const sendMagicLink = async () => {
     const supabase = getSupabaseBrowserClient();
@@ -107,15 +135,15 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
           {session ? (
             <div className="truncate">
               Signed in as <span className="font-medium text-white">{session.user.email}</span>
-              {isAdmin && <span className="ml-2 rounded-full bg-white/10 px-2 py-0.5 text-xs">admin</span>}
+              {adminState.isAdmin && (
+                <span className="ml-2 rounded-full bg-white/10 px-2 py-0.5 text-xs">admin</span>
+              )}
             </div>
           ) : (
             <div className="truncate text-white/70">Guest mode</div>
           )}
-          {adminEmail ? null : (
-            <div className="mt-0.5 text-xs text-amber-200/90">
-              Missing <span className="font-mono">NEXT_PUBLIC_ADMIN_EMAIL</span> (admin UI disabled).
-            </div>
+          {!adminState.hasAdminEmail && (
+            <div className="mt-0.5 text-xs text-amber-200/90">Admin tools disabled.</div>
           )}
         </div>
 
@@ -158,6 +186,7 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
     </div>
   );
 }
+
 
 
 
