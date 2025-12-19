@@ -1038,7 +1038,7 @@ export default function HomePage() {
               {savedMessages.length === 0 && (
                 <div className="empty-state">
                   <div className="empty-state__title">Nothing saved yet</div>
-                  <div className="empty-state__subtitle">Tap "Read later" on a post to keep it here.</div>
+                  <div className="empty-state__subtitle">Tap &quot;Read later&quot; on a post to keep it here.</div>
                 </div>
               )}
               {savedMessages.map((message) => (
