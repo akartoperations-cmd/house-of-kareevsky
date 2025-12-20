@@ -10,6 +10,7 @@ type AuthBarProps = {
 
 type AdminState = { isAdmin: boolean; hasAdminEmail: boolean };
 type AdminCheckStatus = 'pending' | 'ok' | 'fail';
+type BannerState = 'hidden' | 'visible' | 'fading';
 
 export function AuthBar({ onAuthState }: AuthBarProps) {
   const [session, setSession] = useState<Session | null>(null);
@@ -19,8 +20,29 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
   const [adminState, setAdminState] = useState<AdminState>({ isAdmin: false, hasAdminEmail: true });
   const [adminCheckStatus, setAdminCheckStatus] = useState<AdminCheckStatus>('pending');
   const [debugAdmin, setDebugAdmin] = useState(false);
+  const [bannerState, setBannerState] = useState<BannerState>('hidden');
 
   const authedEmail = (session?.user?.email || '').trim().toLowerCase();
+  const showBanner = bannerState !== 'hidden';
+  const bannerFading = bannerState === 'fading';
+
+  useEffect(() => {
+    let fadeTimer: ReturnType<typeof setTimeout> | null = null;
+    let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
+    if (session) {
+      setBannerState('visible');
+      fadeTimer = setTimeout(() => setBannerState('fading'), 3000);
+      hideTimer = setTimeout(() => setBannerState('hidden'), 4000);
+    } else {
+      setBannerState('hidden');
+    }
+
+    return () => {
+      if (fadeTimer) clearTimeout(fadeTimer);
+      if (hideTimer) clearTimeout(hideTimer);
+    };
+  }, [session]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -161,12 +183,19 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
   };
 
   return (
-    <div className="fixed left-0 right-0 top-0 z-[1000] border-b border-white/10 bg-black/40 backdrop-blur">
-      <div className="mx-auto flex max-w-[520px] items-center justify-between gap-3 px-4 py-2 text-sm text-white/90">
+    <div
+      className="pointer-events-none fixed left-0 right-0 top-0 z-[900]"
+      style={{ paddingTop: '4px' }}
+    >
+      <div
+        className={`pointer-events-auto mx-auto flex max-w-[520px] items-center justify-between gap-3 px-4 py-2 text-sm text-white/90 transition-opacity duration-500 ${
+          showBanner ? 'opacity-100' : 'opacity-0'
+        } ${bannerFading ? 'opacity-0' : ''} border-b border-white/10 bg-black/60 backdrop-blur rounded-b-lg`}
+      >
         <div className="min-w-0">
           {session ? (
             <div className="truncate">
-              Signed in as <span className="font-medium text-white">{session.user.email}</span>
+              <span className="font-medium text-white">Signed in</span>
               {adminState.isAdmin && (
                 <span className="ml-2 rounded-full bg-white/10 px-2 py-0.5 text-xs">admin</span>
               )}
