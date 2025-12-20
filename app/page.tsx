@@ -14,6 +14,7 @@ import {
   type PersonalMessage,
 } from './lib/intimateMockData';
 import { AuthBar } from './components/AuthBar';
+import { getSupabaseBrowserClient } from './lib/supabaseClient';
 
 type AdminMessage = {
   id: string;
@@ -166,6 +167,7 @@ const BRANDING = {
 
 export default function HomePage() {
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isSignedIn, setIsSignedIn] = useState(false);
 
   const [activeView, setActiveView] = useState<View>('home');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -418,6 +420,23 @@ export default function HomePage() {
   };
 
   const goHome = () => setActiveView('home');
+
+  const handleSignOut = async () => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      showToast('Sign-out unavailable.');
+      return;
+    }
+    try {
+      await supabase.auth.signOut();
+      setIsSignedIn(false);
+      setIsAdmin(false);
+      setMenuOpen(false);
+      setActiveView('home');
+    } catch {
+      showToast('Sign-out failed.');
+    }
+  };
 
   const openArtistMessage = () => {
     setAdminMessages((prev) => prev.map((m) => ({ ...m, isUnread: false })));
@@ -1209,7 +1228,8 @@ export default function HomePage() {
   return (
     <>
       <AuthBar
-        onAuthState={(_nextSession, nextIsAdmin) => {
+        onAuthState={(nextSession, nextIsAdmin) => {
+          setIsSignedIn(Boolean(nextSession));
           setIsAdmin(nextIsAdmin);
         }}
       />
@@ -1252,6 +1272,12 @@ export default function HomePage() {
                 <span className="bottom-sheet__icon">{Icons.coffee}</span>
                 Treat
               </button>
+              {isSignedIn && (
+                <button className="bottom-sheet__item" onClick={handleSignOut}>
+                  <span className="bottom-sheet__icon">{Icons.close}</span>
+                  Sign out
+                </button>
+              )}
               {isAdmin && (
                 <button
                   className="bottom-sheet__item"
