@@ -9,6 +9,7 @@ type AuthBarProps = {
 };
 
 type AdminState = { isAdmin: boolean; hasAdminEmail: boolean };
+type AdminCheckStatus = 'pending' | 'ok' | 'fail';
 
 export function AuthBar({ onAuthState }: AuthBarProps) {
   const [session, setSession] = useState<Session | null>(null);
@@ -16,8 +17,16 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [adminState, setAdminState] = useState<AdminState>({ isAdmin: false, hasAdminEmail: true });
+  const [adminCheckStatus, setAdminCheckStatus] = useState<AdminCheckStatus>('pending');
+  const [debugAdmin, setDebugAdmin] = useState(false);
 
   const authedEmail = (session?.user?.email || '').trim().toLowerCase();
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    setDebugAdmin(params.get('debugAdmin') === '1');
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -53,7 +62,17 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
   useEffect(() => {
     let cancelled = false;
 
-    const checkAdminStatus = async () => {
+    if (!authedEmail) {
+      setAdminState((prev) => ({ ...prev, isAdmin: false }));
+      setAdminCheckStatus('pending');
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    const attempt = async () => {
       try {
         const res = await fetch('/api/admin/status', {
           method: 'POST',
@@ -62,14 +81,27 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
         });
         if (!res.ok) throw new Error('Failed admin status check');
         const data = (await res.json()) as { hasAdminEmail?: boolean; isAdmin?: boolean };
-        if (cancelled) return;
+        if (cancelled) return false;
         setAdminState({
           hasAdminEmail: Boolean(data?.hasAdminEmail),
           isAdmin: Boolean(data?.isAdmin),
         });
+        setAdminCheckStatus('ok');
+        return true;
       } catch {
-        if (cancelled) return;
+        return false;
+      }
+    };
+
+    const checkAdminStatus = async () => {
+      const first = await attempt();
+      if (cancelled || first) return;
+      await sleep(500);
+      const second = await attempt();
+      if (cancelled) return;
+      if (!second) {
         setAdminState({ hasAdminEmail: false, isAdmin: false });
+        setAdminCheckStatus('fail');
       }
     };
 
@@ -144,6 +176,11 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
           )}
           {!adminState.hasAdminEmail && (
             <div className="mt-0.5 text-xs text-amber-200/90">Admin tools disabled.</div>
+          )}
+          {debugAdmin && (
+            <div className="mt-0.5 text-[11px] text-white/60">
+              adminCheck: {adminCheckStatus}, hasAdminEmail: {String(adminState.hasAdminEmail)}
+            </div>
           )}
         </div>
 

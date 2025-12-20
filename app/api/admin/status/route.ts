@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 
+export const runtime = 'nodejs';
+
 type AdminStatusResponse = {
   ok: boolean;
   hasAdminEmail: boolean;
