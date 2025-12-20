@@ -6,8 +6,6 @@ import {
   emojis,
   fakeComments,
   messages,
-  personalThread,
-  artistMessage,
   photos,
   type Message,
   type Photo,
@@ -185,27 +183,8 @@ export default function HomePage() {
   const [writeText, setWriteText] = useState('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
-  const [adminMessages, setAdminMessages] = useState<AdminMessage[]>([
-    {
-      id: 'admin-1',
-      author: 'Kareevsky',
-      time: '22:48',
-      date: 'Dec 12',
-      createdAt: '2025-12-12T22:48:00Z',
-      text: 'A new letter is waiting for you. I kept it short, like a whisper.',
-      isUnread: true,
-    },
-    {
-      id: 'admin-2',
-      author: 'Kareevsky',
-      time: '21:10',
-      date: 'Dec 11',
-      createdAt: '2025-12-11T21:10:00Z',
-      text: 'If you have time tonight, write back. I read everything.',
-      isUnread: false,
-    },
-  ]);
-  const [personalMessages, setPersonalMessages] = useState<PersonalMessage[]>(personalThread);
+  const [adminMessages, setAdminMessages] = useState<AdminMessage[]>([]);
+  const [personalMessages, setPersonalMessages] = useState<PersonalMessage[]>([]);
   const [comments, setComments] = useState(fakeComments);
   const [commentReply, setCommentReply] = useState('');
   const [createTab, setCreateTab] = useState<'text' | 'media' | 'audio' | 'poll'>('text');
