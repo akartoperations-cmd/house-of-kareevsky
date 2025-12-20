@@ -17,6 +17,7 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isSessionLoading, setIsSessionLoading] = useState(true);
   const [adminState, setAdminState] = useState<AdminState>({ isAdmin: false, hasAdminEmail: true });
   const [adminCheckStatus, setAdminCheckStatus] = useState<AdminCheckStatus>('pending');
   const [debugAdmin, setDebugAdmin] = useState(false);
@@ -56,6 +57,7 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) {
       setStatus('Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY.');
+      setIsSessionLoading(false);
       return () => {
         mounted = false;
       };
@@ -65,10 +67,12 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
       if (!mounted) return;
       if (error) setStatus(error.message);
       setSession(data.session ?? null);
+      setIsSessionLoading(false);
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
+      setIsSessionLoading(false);
     });
 
     return () => {
@@ -146,7 +150,7 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
     setLoading(true);
     setStatus(null);
     try {
-      const emailRedirectTo = `${window.location.origin}/`;
+      const emailRedirectTo = `${window.location.origin}/auth/callback`;
       const { error } = await supabase.auth.signInWithOtp({
         email: trimmed,
         options: { emailRedirectTo },
@@ -193,7 +197,9 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
         } ${bannerFading ? 'opacity-0' : ''} border-b border-white/10 bg-black/60 backdrop-blur rounded-b-lg`}
       >
         <div className="min-w-0">
-          {session ? (
+          {isSessionLoading ? (
+            <div className="truncate text-white/70">Loading…</div>
+          ) : session ? (
             <div className="truncate">
               <span className="font-medium text-white">Signed in</span>
               {adminState.isAdmin && (
