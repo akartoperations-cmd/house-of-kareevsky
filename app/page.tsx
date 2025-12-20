@@ -1217,7 +1217,12 @@ export default function HomePage() {
               </button>
             )}
 
-            <button className="menu-btn" onClick={openMenu}>
+            <button
+              type="button"
+              className="menu-btn"
+              onClick={openMenu}
+              aria-label="Open menu"
+            >
               {Icons.menu}
             </button>
           </div>

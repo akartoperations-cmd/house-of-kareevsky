@@ -976,6 +976,7 @@ button:focus {
   position: fixed;
   top: var(--space-md);
   right: var(--space-md);
+  touch-action: manipulation;
   bottom: auto;
   left: auto;
   transform: none;
@@ -1863,23 +1864,24 @@ button:focus {
 
 .notification-banner {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 50;
+  top: 56px;
+  left: var(--space-md);
+  right: var(--space-md);
+  z-index: 90;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-sm);
-  padding: 12px var(--space-md);
+  padding: 10px var(--space-md);
   margin: 0;
   background: rgba(27, 24, 22, 0.95);
   color: #fff;
-  border-radius: 0;
+  border-radius: var(--radius-lg);
   border: none;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   font-family: var(--font-ui);
   box-shadow: var(--shadow-medium);
+  touch-action: manipulation;
 }
 
 .badge {

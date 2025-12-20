@@ -21,22 +21,26 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
   const [adminState, setAdminState] = useState<AdminState>({ isAdmin: false, hasAdminEmail: true });
   const [adminCheckStatus, setAdminCheckStatus] = useState<AdminCheckStatus>('pending');
   const [debugAdmin, setDebugAdmin] = useState(false);
-  const [bannerState, setBannerState] = useState<BannerState>('hidden');
+  const [bannerState, setBannerState] = useState<BannerState>('visible');
 
   const authedEmail = (session?.user?.email || '').trim().toLowerCase();
-  const showBanner = bannerState !== 'hidden';
-  const bannerFading = bannerState === 'fading';
+  // For signed-in users: banner auto-hides after 4s
+  // For guests: banner stays visible so they can sign in
+  const showBanner = !session || bannerState !== 'hidden';
+  const bannerFading = session && bannerState === 'fading';
 
   useEffect(() => {
     let fadeTimer: ReturnType<typeof setTimeout> | null = null;
     let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
     if (session) {
+      // Signed-in: show briefly then hide
       setBannerState('visible');
       fadeTimer = setTimeout(() => setBannerState('fading'), 3000);
       hideTimer = setTimeout(() => setBannerState('hidden'), 4000);
     } else {
-      setBannerState('hidden');
+      // Guest: keep visible for sign-in
+      setBannerState('visible');
     }
 
     return () => {
@@ -186,13 +190,16 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
     }
   };
 
+  // When banner is hidden, remove pointer-events entirely to avoid blocking menu-btn and notification-banner
+  const bannerPointerEvents = showBanner ? 'pointer-events-auto' : 'pointer-events-none';
+
   return (
     <div
-      className="pointer-events-none fixed left-0 right-0 top-0 z-[900]"
+      className="pointer-events-none fixed left-0 right-0 top-0 z-[60]"
       style={{ paddingTop: '4px' }}
     >
       <div
-        className={`pointer-events-auto mx-auto flex max-w-[520px] items-center justify-between gap-3 px-4 py-2 text-sm text-white/90 transition-opacity duration-500 ${
+        className={`${bannerPointerEvents} mx-auto flex max-w-[520px] items-center justify-between gap-3 px-4 py-2 text-sm text-white/90 transition-opacity duration-500 ${
           showBanner ? 'opacity-100' : 'opacity-0'
         } ${bannerFading ? 'opacity-0' : ''} border-b border-white/10 bg-black/60 backdrop-blur rounded-b-lg`}
       >
@@ -229,24 +236,36 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
             Sign out
           </button>
         ) : (
-          <div className="flex shrink-0 items-center gap-2">
+          <form
+            className="flex shrink-0 items-center gap-2"
+            autoComplete="off"
+            onSubmit={(e) => {
+              e.preventDefault();
+              sendMagicLink();
+            }}
+          >
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="Email for magic link"
+              type="text"
               inputMode="email"
-              autoComplete="email"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              data-form-type="other"
+              data-lpignore="true"
               className="w-[190px] rounded-full border border-white/10 bg-black/30 px-3 py-1.5 text-xs text-white placeholder:text-white/40 outline-none focus:border-white/25"
             />
             <button
-              type="button"
-              onClick={sendMagicLink}
+              type="submit"
               disabled={loading || !email.trim()}
               className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-black hover:bg-white/90 disabled:opacity-50"
             >
               Sign in
             </button>
-          </div>
+          </form>
         )}
       </div>
 
