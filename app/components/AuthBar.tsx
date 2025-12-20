@@ -202,6 +202,7 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
         className={`${bannerPointerEvents} mx-auto flex max-w-[520px] items-center justify-between gap-3 px-4 py-2 text-sm text-white/90 transition-opacity duration-500 ${
           showBanner ? 'opacity-100' : 'opacity-0'
         } ${bannerFading ? 'opacity-0' : ''} border-b border-white/10 bg-black/60 backdrop-blur rounded-b-lg`}
+        style={{ paddingRight: '72px' }} // reserve space for the menu button on mobile
       >
         <div className="min-w-0">
           {isSessionLoading ? (
