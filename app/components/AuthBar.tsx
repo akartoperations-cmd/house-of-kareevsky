@@ -79,7 +79,7 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
 
     const supabase = getSupabaseBrowserClient();
     if (!supabase) {
-      setStatus('Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY.');
+      setStatus('Auth unavailable');
       setIsSessionLoading(false);
       return () => {
         mounted = false;
@@ -203,7 +203,7 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
   const signOut = async () => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) {
-      setStatus('Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY.');
+      setStatus('Auth unavailable');
       return;
     }
 
