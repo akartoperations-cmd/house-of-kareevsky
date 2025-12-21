@@ -214,12 +214,15 @@ button:focus {
   clip-path: polygon(100% 0, 100% 100%, 25% 100%, 80% 0);
 }
 
-/* Photo message */
+/* Photo message - single photos use same square tile sizing as multi-photo grids */
 .message__bubble--photo {
   overflow: hidden;
   border-radius: var(--radius-bubble);
   border-bottom-left-radius: var(--space-xs);
   cursor: pointer;
+  /* Fixed size for consistent square tile appearance */
+  width: 200px;
+  max-width: 100%;
 }
 
 .message__bubble--photo::after {
@@ -227,10 +230,13 @@ button:focus {
 }
 
 .message__image {
-  width: 100%;
+  width: 200px;
+  height: 200px;
+  max-width: 100%;
   display: block;
   border-radius: var(--radius-bubble);
   border-bottom-left-radius: var(--space-xs);
+  object-fit: cover;
 }
 
 .message__photo-count {
@@ -601,23 +607,25 @@ button:focus {
   background: rgba(0, 0, 0, 0.92);
 }
 
-/* Unified Photo Viewer */
+/* Unified Photo Viewer - edge-to-edge on mobile with safe-area insets */
 .photo-viewer {
   position: fixed;
   inset: 0;
   z-index: 1200;
-  background: rgba(0, 0, 0, 0.9);
+  background: rgba(0, 0, 0, 0.95);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-lg);
+  padding: var(--space-md);
+  padding-top: calc(var(--space-md) + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0px));
 }
 
 .photo-viewer__content {
   position: relative;
-  max-width: calc(100vw - 2 * var(--space-lg));
-  max-height: calc(100vh - 2 * var(--space-lg));
+  max-width: 100%;
+  max-height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -626,18 +634,25 @@ button:focus {
 
 .photo-viewer__image {
   max-width: 100%;
-  max-height: calc(100vh - 180px);
+  max-height: calc(100vh - 100px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
   width: auto;
   height: auto;
   object-fit: contain;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   box-shadow: var(--shadow-medium);
 }
 
 @media (max-width: 520px) {
+  /* Mobile: truly edge-to-edge, minimal padding */
+  .photo-viewer {
+    padding: 0;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
   .photo-viewer__image {
-    max-height: calc(100vh - 150px);
-    border-radius: var(--radius-sm);
+    max-width: 100vw;
+    max-height: calc(100vh - 80px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    border-radius: 0;
   }
 }
 
@@ -971,21 +986,21 @@ button:focus {
    MENU & NAVIGATION
    ============================================ */
 
-/* Menu Button */
+/* Menu Button - positioned ~0.5cm higher/right, slightly smaller to avoid collision with auth banner */
 .menu-btn {
   position: fixed;
-  top: var(--space-md);
-  right: var(--space-md);
+  top: 6px;
+  right: 6px;
   touch-action: manipulation;
   bottom: auto;
   left: auto;
   transform: none;
-  background: rgba(0, 0, 0, 0.2);
-  width: 44px;
-  height: 44px;
+  background: rgba(0, 0, 0, 0.25);
+  width: 40px;
+  height: 40px;
   padding: 0;
   justify-content: center;
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(6px);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -993,10 +1008,10 @@ button:focus {
   font-family: var(--font-ui);
   font-size: 14px;
   font-weight: 500;
-  box-shadow: none;
-  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  z-index: 110;
   transition: transform 0.2s, background 0.2s;
-  border: none;
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .menu-btn:hover {
@@ -1614,16 +1629,17 @@ button:focus {
   pointer-events: none;
 }
 
-/* Top Branding Header */
+/* Top Branding Header - higher z-index + subtle backdrop blur so text never overlaps logo */
 .top-branding {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
-  z-index: 15;
+  z-index: 50;
   padding: var(--space-lg) var(--space-lg) var(--space-xl);
   padding-top: calc(var(--space-lg) + env(safe-area-inset-top, 0px));
-  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0.35) 50%, rgba(0, 0, 0, 0.1) 80%, transparent 100%);
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.4) 40%, rgba(0, 0, 0, 0.15) 70%, transparent 100%);
+  backdrop-filter: blur(2px);
   text-align: center;
   pointer-events: none;
 }

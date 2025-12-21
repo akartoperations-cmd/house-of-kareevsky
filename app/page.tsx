@@ -64,6 +64,15 @@ const formatDayLabel = (value?: string) => {
   }).format(d);
 };
 
+// Format date for showing alongside time in message meta (e.g. "Dec 12")
+const formatShortDate = (value?: string) => {
+  const d = parseDate(value);
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+  }).format(d);
+};
+
 const Icons = {
   menu: (
     <svg className="icon icon--lg" viewBox="0 0 24 24" fill="currentColor">
@@ -1165,15 +1174,11 @@ export default function HomePage() {
               {galleryPhotos.length > 10 && <span className="swipe-dots__more">+{galleryPhotos.length - 10}</span>}
             </div>
 
+            {/* Feed without date dividers - date shown in each message's meta */}
             <div className="feed feed--overlay">
               {feedItems.map((item) => {
-                if (item.type === 'date') {
-                  return (
-                    <div key={item.id} className="date-pill date-pill--overlay">
-                      {item.label}
-                    </div>
-                  );
-                }
+                // Skip date dividers - date is now shown in message__meta
+                if (item.type === 'date') return null;
                 const message = item.message;
                 return (
                   <div key={message.id} className="feed-item">
@@ -1587,7 +1592,10 @@ function MessageBubble({
               </button>
             ))}
           </div>
-          <div className="message__meta">{message.time}</div>
+          {/* Date shown at bottom-right next to time */}
+          <div className="message__meta">
+            {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
+          </div>
         </div>
       </div>
     );
@@ -1630,7 +1638,10 @@ function MessageBubble({
           ) : (
             <img src={photoSet[0]} alt="" className="message__image" />
           )}
-          <div className="message__meta message__meta--photo">{message.time}</div>
+          {/* Date shown at bottom-right next to time */}
+          <div className="message__meta message__meta--photo">
+            {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
+          </div>
         </div>
 
         {caption && (
@@ -1676,7 +1687,10 @@ function MessageBubble({
     <div className="message">
       <div className="message__bubble message__bubble--text">
         <p className="message__handwriting">{message.text}</p>
-        <div className="message__meta">{message.time}</div>
+        {/* Date shown at bottom-right next to time */}
+        <div className="message__meta">
+          {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
+        </div>
       </div>
 
       {reaction && <div className="message__reaction">{reaction}</div>}
