@@ -22,7 +22,9 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
   const [adminState, setAdminState] = useState<AdminState>({ isAdmin: false, hasAdminEmail: true });
   const [adminCheckStatus, setAdminCheckStatus] = useState<AdminCheckStatus>('pending');
   const [debugAdmin, setDebugAdmin] = useState(false);
+  const [debugAuth, setDebugAuth] = useState(false);
   const [bannerState, setBannerState] = useState<BannerState>('visible');
+  const [lastAuthResult, setLastAuthResult] = useState<{ ok: boolean; code: string } | null>(null);
 
   const authedEmail = (session?.user?.email || '').trim().toLowerCase();
   // For signed-in users: banner auto-hides after 4s
@@ -69,6 +71,7 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     setDebugAdmin(params.get('debugAdmin') === '1');
+    setDebugAuth(params.get('debugAuth') === '1');
   }, []);
 
   useEffect(() => {
@@ -160,7 +163,8 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
   const sendMagicLink = async () => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) {
-      setStatus('Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY.');
+      setStatus('Sign-in unavailable. Please try again later.');
+      setLastAuthResult({ ok: false, code: 'no_client' });
       return;
     }
 
@@ -169,18 +173,28 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
 
     setLoading(true);
     setStatus(null);
+    setLastAuthResult(null);
     try {
       const emailRedirectTo = `${window.location.origin}/auth/callback`;
       const { error } = await supabase.auth.signInWithOtp({
         email: trimmed,
         options: { emailRedirectTo },
       });
-      if (error) throw error;
+      if (error) {
+        setLastAuthResult({ ok: false, code: error.code || error.name || 'unknown' });
+        throw error;
+      }
+      setLastAuthResult({ ok: true, code: 'none' });
       setStatus('Check your email for the sign-in link.');
       setEmail('');
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Sign-in failed.';
-      setStatus(msg);
+      // Show user-friendly message, hide technical details
+      const errCode = e instanceof Error && 'code' in e ? (e as { code?: string }).code : null;
+      if (errCode === 'over_email_send_rate_limit') {
+        setStatus('Too many requests. Please wait a minute and try again.');
+      } else {
+        setStatus('Sign-in failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -239,6 +253,11 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
           {debugAdmin && (
             <div className="mt-0.5 text-[11px] text-white/60">
               adminCheck: {adminCheckStatus}, hasAdminEmail: {String(adminState.hasAdminEmail)}
+            </div>
+          )}
+          {debugAuth && lastAuthResult && (
+            <div className="mt-0.5 text-[11px] text-white/60">
+              authSend: {lastAuthResult.ok ? 'ok' : 'fail'}, errorCode: {lastAuthResult.code}
             </div>
           )}
         </div>
