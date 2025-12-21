@@ -7,6 +7,7 @@ import {
   fakeComments,
   messages,
   photos,
+  type Comment,
   type Message,
   type Photo,
   type PersonalMessage,
@@ -185,7 +186,7 @@ export default function HomePage() {
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
   const [adminMessages, setAdminMessages] = useState<AdminMessage[]>([]);
   const [personalMessages, setPersonalMessages] = useState<PersonalMessage[]>([]);
-  const [comments, setComments] = useState(fakeComments);
+  const [commentsByPostId, setCommentsByPostId] = useState<Record<string, Comment[]>>({});
   const [commentReply, setCommentReply] = useState('');
   const [createTab, setCreateTab] = useState<'text' | 'media' | 'audio' | 'poll'>('text');
   const [createTextTitle, setCreateTextTitle] = useState('');
@@ -219,6 +220,10 @@ export default function HomePage() {
   const currentPhoto = galleryPhotos[currentPhotoIndex];
   const filteredMessages = feedMessages.filter((m) => m.type !== 'sticker');
   const savedMessages = filteredMessages.filter((m) => bookmarks[m.id]);
+  const commentsForActiveMessage =
+    activeMessageId && commentsByPostId[activeMessageId]
+      ? commentsByPostId[activeMessageId]
+      : fakeComments;
   const unreadAdminCount = adminMessages.filter((m) => m.isUnread).length;
   const feedItems = useMemo(() => {
     const items: Array<
@@ -1478,7 +1483,7 @@ export default function HomePage() {
               <button onClick={closeComments}>{Icons.close}</button>
             </div>
             <div className="comments-modal__list">
-              {comments.map((comment) => (
+              {commentsForActiveMessage.map((comment) => (
                 <div key={comment.id} className="comment" style={{ position: 'relative' }}>
                   <div
                     className="comment__author"
@@ -1510,13 +1515,16 @@ export default function HomePage() {
                       className="write-view__send"
                       style={{ width: 'auto', padding: '8px 14px' }}
                       onClick={() => {
-                        if (!isAdmin) return;
+                        if (!isAdmin || !activeMessageId) return;
                         const text = commentReply.trim();
                         if (!text) return;
-                        setComments((prev) => [
-                          ...prev,
-                          { id: `c-${Date.now()}`, author: 'Kareevsky', text },
-                        ]);
+                        setCommentsByPostId((prev) => {
+                          const existing = prev[activeMessageId] ?? fakeComments;
+                          return {
+                            ...prev,
+                            [activeMessageId]: [...existing, { id: `c-${Date.now()}`, author: 'Kareevsky', text }],
+                          };
+                        });
                         setCommentReply('');
                       }}
                     >

@@ -16,6 +16,7 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
   const [session, setSession] = useState<Session | null>(null);
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<string | null>(null);
+  const [statusVisible, setStatusVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isSessionLoading, setIsSessionLoading] = useState(true);
   const [adminState, setAdminState] = useState<AdminState>({ isAdmin: false, hasAdminEmail: true });
@@ -48,6 +49,21 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
       if (hideTimer) clearTimeout(hideTimer);
     };
   }, [session]);
+
+  // Auto-hide status/toast after a few seconds with a small fade-out
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let fadeTimer: ReturnType<typeof setTimeout> | null = null;
+    if (status) {
+      setStatusVisible(true);
+      fadeTimer = setTimeout(() => setStatusVisible(false), 4000);
+      timer = setTimeout(() => setStatus(null), 5000);
+    }
+    return () => {
+      if (fadeTimer) clearTimeout(fadeTimer);
+      if (timer) clearTimeout(timer);
+    };
+  }, [status]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -271,8 +287,14 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
       </div>
 
       {status && (
-        <div className="mx-auto max-w-[520px] px-4 pb-2 text-xs text-white/70">
-          {status}
+        <div
+          className={`pointer-events-auto fixed left-3 right-3 top-3 z-[1200] flex justify-center transition-opacity duration-500 ${
+            statusVisible ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          <div className="max-w-[520px] rounded-lg border border-white/15 bg-black/80 px-4 py-3 text-xs text-white shadow-lg backdrop-blur">
+            {status}
+          </div>
         </div>
       )}
     </div>
