@@ -16,7 +16,6 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
   const [session, setSession] = useState<Session | null>(null);
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<string | null>(null);
-  const [statusVisible, setStatusVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isSessionLoading, setIsSessionLoading] = useState(true);
   const [adminState, setAdminState] = useState<AdminState>({ isAdmin: false, hasAdminEmail: true });
@@ -25,8 +24,14 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
   const [debugAuth, setDebugAuth] = useState(false);
   const [bannerState, setBannerState] = useState<BannerState>('visible');
   const [lastAuthResult, setLastAuthResult] = useState<{ ok: boolean; code: string } | null>(null);
+  const [lastAuthRedirectHost, setLastAuthRedirectHost] = useState<string>('none');
+  const [cooldownUntilMs, setCooldownUntilMs] = useState<number>(0);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   const authedEmail = (session?.user?.email || '').trim().toLowerCase();
+  const cooldownMsLeft = Math.max(0, cooldownUntilMs - nowMs);
+  const cooldownActive = cooldownMsLeft > 0;
+  const cooldownSecondsLeft = Math.ceil(cooldownMsLeft / 1000);
   // For signed-in users: banner auto-hides after 4s
   // For guests: banner stays visible so they can sign in
   const showBanner = !session || bannerState !== 'hidden';
@@ -52,20 +57,12 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
     };
   }, [session]);
 
-  // Auto-hide status/toast after a few seconds with a small fade-out
+  // Keep "now" ticking only during cooldown (for disabling the button reliably)
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let fadeTimer: ReturnType<typeof setTimeout> | null = null;
-    if (status) {
-      setStatusVisible(true);
-      fadeTimer = setTimeout(() => setStatusVisible(false), 4000);
-      timer = setTimeout(() => setStatus(null), 5000);
-    }
-    return () => {
-      if (fadeTimer) clearTimeout(fadeTimer);
-      if (timer) clearTimeout(timer);
-    };
-  }, [status]);
+    if (!cooldownActive) return;
+    const t = setInterval(() => setNowMs(Date.now()), 250);
+    return () => clearInterval(t);
+  }, [cooldownActive]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -88,7 +85,7 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
 
     supabase.auth.getSession().then(({ data, error }) => {
       if (!mounted) return;
-      if (error) setStatus(error.message);
+      if (error) setStatus('Auth unavailable');
       setSession(data.session ?? null);
       setIsSessionLoading(false);
     });
@@ -163,19 +160,26 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
   const sendMagicLink = async () => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) {
-      setStatus('Sign-in unavailable. Please try again later.');
+      setStatus('Auth unavailable');
       setLastAuthResult({ ok: false, code: 'no_client' });
+      setLastAuthRedirectHost(typeof window !== 'undefined' ? window.location.hostname : 'none');
       return;
     }
 
     const trimmed = email.trim();
     if (!trimmed) return;
+    if (cooldownActive) return;
 
     setLoading(true);
     setStatus(null);
     setLastAuthResult(null);
     try {
-      const emailRedirectTo = `${window.location.origin}/auth/callback`;
+      // Use current origin to avoid accidental redirects to an old/incorrect host.
+      // Keep it at "/" to match the most common Supabase allowed redirect configuration.
+      const emailRedirectTo = `${window.location.origin}/`;
+      setLastAuthRedirectHost(window.location.hostname);
+      setCooldownUntilMs(Date.now() + 30_000);
+      setNowMs(Date.now());
       const { error } = await supabase.auth.signInWithOtp({
         email: trimmed,
         options: { emailRedirectTo },
@@ -189,11 +193,12 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
       setEmail('');
     } catch (e) {
       // Show user-friendly message, hide technical details
-      const errCode = e instanceof Error && 'code' in e ? (e as { code?: string }).code : null;
-      if (errCode === 'over_email_send_rate_limit') {
-        setStatus('Too many requests. Please wait a minute and try again.');
+      const errAny = e as unknown as { code?: string; name?: string; status?: number };
+      const errCode = errAny?.code || errAny?.name || 'unknown';
+      if (errCode === 'over_email_send_rate_limit' || errAny?.status === 429) {
+        setStatus('Please wait and try again.');
       } else {
-        setStatus('Sign-in failed. Please try again.');
+        setStatus('Sign-in failed. Try again.');
       }
     } finally {
       setLoading(false);
@@ -257,7 +262,8 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
           )}
           {debugAuth && lastAuthResult && (
             <div className="mt-0.5 text-[11px] text-white/60">
-              authSend: {lastAuthResult.ok ? 'ok' : 'fail'}, errorCode: {lastAuthResult.code}
+              authSend: {lastAuthResult.ok ? 'ok' : 'fail'}, errorCode: {lastAuthResult.code}, redirectHost:{' '}
+              {lastAuthRedirectHost}
             </div>
           )}
         </div>
@@ -272,50 +278,43 @@ export function AuthBar({ onAuthState }: AuthBarProps) {
             Sign out
           </button>
         ) : (
-          <form
-            className="flex shrink-0 items-center gap-2"
-            autoComplete="off"
-            onSubmit={(e) => {
-              e.preventDefault();
-              sendMagicLink();
-            }}
-          >
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Email for magic link"
-              type="text"
-              inputMode="email"
+          <div className="shrink-0">
+            <form
+              className="flex items-center gap-2"
               autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              data-form-type="other"
-              data-lpignore="true"
-              className="w-[190px] rounded-full border border-white/10 bg-black/30 px-3 py-1.5 text-xs text-white placeholder:text-white/40 outline-none focus:border-white/25"
-            />
-            <button
-              type="submit"
-              disabled={loading || !email.trim()}
-              className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-black hover:bg-white/90 disabled:opacity-50"
+              onSubmit={(e) => {
+                e.preventDefault();
+                sendMagicLink();
+              }}
             >
-              Sign in
-            </button>
-          </form>
+              <input
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Email for magic link"
+                type="text"
+                inputMode="email"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                data-form-type="other"
+                data-lpignore="true"
+                className="w-[190px] rounded-full border border-white/10 bg-black/30 px-3 py-1.5 text-xs text-white placeholder:text-white/40 outline-none focus:border-white/25"
+              />
+              <button
+                type="submit"
+                disabled={loading || !email.trim() || cooldownActive}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-black hover:bg-white/90 disabled:opacity-50"
+              >
+                {cooldownActive ? `Wait ${cooldownSecondsLeft}s` : 'Sign in'}
+              </button>
+            </form>
+
+            {/* Small, neat status line near the sign-in controls (no email, no secrets). */}
+            {status && <div className="mt-1 text-[11px] text-white/70">{status}</div>}
+          </div>
         )}
       </div>
-
-      {status && (
-        <div
-          className={`pointer-events-auto fixed left-3 right-3 top-3 z-[1200] flex justify-center transition-opacity duration-500 ${
-            statusVisible ? 'opacity-100' : 'opacity-0'
-          }`}
-        >
-          <div className="max-w-[520px] rounded-lg border border-white/15 bg-black/80 px-4 py-3 text-xs text-white shadow-lg backdrop-blur">
-            {status}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
