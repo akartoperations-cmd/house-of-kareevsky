@@ -145,6 +145,8 @@ button:focus {
   margin-left: 0;
   position: relative;
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
 }
 
 @media (min-width: 520px) {
@@ -192,7 +194,9 @@ button:focus {
   display: inline-flex;
   flex-direction: column;
   width: fit-content;
-  max-width: min(100%, 640px);
+  max-width: min(86vw, 520px);
+  white-space: pre-wrap;
+  word-break: break-word;
   background: var(--bg-paper-creamy);
   background-image:
     radial-gradient(circle at 20% 20%, rgba(0, 0, 0, 0.02) 0 2px, transparent 2px),
