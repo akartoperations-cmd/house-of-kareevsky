@@ -4,6 +4,17 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "House of Kareevsky",
   description: "A private messenger-like home for stories, songs and letters",
+  applicationName: "House of Kareevsky",
+  manifest: "/manifest.webmanifest",
+  themeColor: "#000000",
+  appleWebApp: {
+    statusBarStyle: "black-translucent",
+    title: "House of Kareevsky",
+  },
+  icons: {
+    icon: "/icons/icon-192x192.png",
+    apple: "/icons/icon-192x192.png",
+  },
 };
 
 export default function RootLayout({

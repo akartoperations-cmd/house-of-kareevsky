@@ -11,6 +11,10 @@ import {
   type Message,
   type Photo,
   type PersonalMessage,
+  type I18nLang,
+  type I18nMode,
+  type I18nItem,
+  type I18nPack,
 } from './lib/intimateMockData';
 import { AuthBar } from './components/AuthBar';
 import { getSupabaseBrowserClient } from './lib/supabaseClient';
@@ -40,6 +44,11 @@ type PhotoViewerState = PhotoViewerData | null;
 type AdminInboxState = { hasUnread: boolean; count: number };
 type GalleryTab = 'photoOfDay' | 'posts';
 
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+};
+
 const parseDate = (value?: string) => {
   const d = value ? new Date(value) : new Date();
   return Number.isNaN(d.getTime()) ? new Date() : d;
@@ -62,6 +71,22 @@ const formatDayLabel = (value?: string) => {
     day: 'numeric',
     year: 'numeric',
   }).format(d);
+};
+
+const isStandaloneDisplay = () => {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    (window.navigator as Navigator & { standalone?: boolean }).standalone === true
+  );
+};
+
+const isIosSafari = () => {
+  if (typeof window === 'undefined') return false;
+  const ua = window.navigator.userAgent || '';
+  const isIOS = /iphone|ipad|ipod/i.test(ua);
+  const isSafari = /safari/i.test(ua) && !/crios/i.test(ua) && !/fxios/i.test(ua) && !/edgios/i.test(ua);
+  return isIOS && isSafari;
 };
 
 // Format date for showing alongside time in message meta (e.g. "Dec 12")
@@ -141,6 +166,13 @@ const Icons = {
       <line x1="14" y1="1" x2="14" y2="4" />
     </svg>
   ),
+  download: (
+    <svg className="icon icon--lg" viewBox="0 0 24 24">
+      <path d="M12 3v12" />
+      <path d="M6 13l6 6 6-6" />
+      <path d="M5 21h14" />
+    </svg>
+  ),
   play: (
     <svg className="icon" viewBox="0 0 24 24" fill="currentColor" stroke="none">
       <polygon points="5 3 19 12 5 21 5 3" />
@@ -180,7 +212,7 @@ export default function HomePage() {
   const [activeView, setActiveView] = useState<View>('home');
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
+  const [currentPhotoIndex, setCurrentPhotoIndex] = useState(() => photos.length - 1);
   const [photoViewer, setPhotoViewer] = useState<PhotoViewerState>(null);
 
   const [commentsModalOpen, setCommentsModalOpen] = useState(false);
@@ -197,7 +229,7 @@ export default function HomePage() {
   const [personalMessages, setPersonalMessages] = useState<PersonalMessage[]>([]);
   const [commentsByPostId, setCommentsByPostId] = useState<Record<string, Comment[]>>({});
   const [commentReply, setCommentReply] = useState('');
-  const [createTab, setCreateTab] = useState<'text' | 'media' | 'audio' | 'poll'>('text');
+  const [createTab, setCreateTab] = useState<'text' | 'media' | 'audio' | 'poll' | 'languages'>('text');
   const [createTextTitle, setCreateTextTitle] = useState('');
   const [createTextBody, setCreateTextBody] = useState('');
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
@@ -206,8 +238,15 @@ export default function HomePage() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
+  // Multi-language post state
+  const [i18nMode, setI18nMode] = useState<I18nMode>('text');
+  const [i18nTexts, setI18nTexts] = useState<Record<I18nLang, string>>({ en: '', es: '', fr: '', it: '' });
+  const [i18nFiles, setI18nFiles] = useState<Record<I18nLang, File | null>>({ en: null, es: null, fr: null, it: null });
+  const [i18nPreviews, setI18nPreviews] = useState<Record<I18nLang, string>>({ en: '', es: '', fr: '', it: '' });
+  const i18nFileInputRefs = useRef<Record<I18nLang, HTMLInputElement | null>>({ en: null, es: null, fr: null, it: null });
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [photoAboutOpen, setPhotoAboutOpen] = useState(false);
-  const [galleryPhotos, setGalleryPhotos] = useState<Photo[]>(photos);
+  const [galleryPhotos, setGalleryPhotos] = useState<Photo[]>(() => [...photos].reverse());
   const [addPhotoDayOpen, setAddPhotoDayOpen] = useState(false);
   const [newPhotoDayFiles, setNewPhotoDayFiles] = useState<File[]>([]);
   const [newPhotoDayPreviews, setNewPhotoDayPreviews] = useState<string[]>([]);
@@ -216,8 +255,10 @@ export default function HomePage() {
   const [newPhotoDayTimes, setNewPhotoDayTimes] = useState<string[]>([]);
   const [feedMessages, setFeedMessages] = useState<Message[]>(() => [...messages].reverse());
   const [galleryTab, setGalleryTab] = useState<GalleryTab>('photoOfDay');
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [installPromptEvent, setInstallPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
+  const [canInstall, setCanInstall] = useState(false);
+  const [showIosInstallHint, setShowIosInstallHint] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
   const pendingScrollToBottom = useRef(false);
   const didInitialScroll = useRef(false);
   const isPhotoOpen = Boolean(photoViewer);
@@ -227,7 +268,9 @@ export default function HomePage() {
   const lastTapTime = useRef<number>(0);
 
   const currentPhoto = galleryPhotos[currentPhotoIndex];
-  const filteredMessages = feedMessages.filter((m) => m.type !== 'sticker');
+  const filteredMessages = feedMessages.filter(
+    (m) => m.type !== 'sticker' && (!m.isTest || isAdmin), // hide test posts for non-admins
+  );
   const savedMessages = filteredMessages.filter((m) => bookmarks[m.id]);
   const commentsForActiveMessage =
     activeMessageId && commentsByPostId[activeMessageId]
@@ -254,6 +297,47 @@ export default function HomePage() {
   const showToast = useCallback((text: string, timeoutMs = 2500) => {
     setToastMessage(text);
     setTimeout(() => setToastMessage(null), timeoutMs);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.register('/sw.js').catch(() => {
+      // Registration is best-effort; offline caching can be added later.
+    });
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const standalone = isStandaloneDisplay();
+    setIsStandalone(standalone);
+
+    const handleBeforeInstallPrompt = (event: Event) => {
+      const promptEvent = event as BeforeInstallPromptEvent;
+      event.preventDefault();
+      setInstallPromptEvent(promptEvent);
+      setCanInstall(true);
+    };
+
+    const handleAppInstalled = () => {
+      setCanInstall(false);
+      setInstallPromptEvent(null);
+      setShowIosInstallHint(false);
+      setIsStandalone(true);
+    };
+
+    if (!standalone && isIosSafari()) {
+      setShowIosInstallHint(true);
+    }
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
   }, []);
 
   useEffect(() => {
@@ -397,6 +481,20 @@ export default function HomePage() {
 
   const openMenu = () => setMenuOpen(true);
   const closeMenu = () => setMenuOpen(false);
+
+  const handleInstallClick = useCallback(async () => {
+    if (!installPromptEvent) return;
+    setCanInstall(false);
+    try {
+      installPromptEvent.prompt();
+      const choice = await installPromptEvent.userChoice;
+      if (choice?.outcome === 'accepted') {
+        setInstallPromptEvent(null);
+      }
+    } catch {
+      setCanInstall(Boolean(installPromptEvent));
+    }
+  }, [installPromptEvent]);
 
   const navigateTo = (view: View) => {
     if ((view === 'create' || view === 'personal') && !isAdmin) {
@@ -552,6 +650,57 @@ export default function HomePage() {
       showToast('Poll published (mock).');
       setPollQuestion('');
       setPollOptions(['', '']);
+    } else if (createTab === 'languages') {
+      const langs: I18nLang[] = ['en', 'es', 'fr', 'it'];
+      
+      if (i18nMode === 'text') {
+        // Validate all texts are filled
+        const allFilled = langs.every((l) => i18nTexts[l].trim().length > 0);
+        if (!allFilled) {
+          showToast('Please fill in all 4 languages.');
+          return;
+        }
+        const items: I18nItem[] = langs.map((lang) => ({
+          lang,
+          text: i18nTexts[lang].trim(),
+        }));
+        const pack: I18nPack = { mode: 'text', items };
+        const newMsg: Message = {
+          id: `i18n-${Date.now()}`,
+          type: 'i18n',
+          time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+          createdAt: new Date().toISOString(),
+          i18nPack: pack,
+        };
+        setFeedMessages((prev) => [...prev, newMsg]);
+        pendingScrollToBottom.current = true;
+        showToast('Multi-language post published!');
+        setI18nTexts({ en: '', es: '', fr: '', it: '' });
+      } else {
+        // Screenshot mode - validate all images are uploaded
+        const allUploaded = langs.every((l) => i18nPreviews[l].length > 0);
+        if (!allUploaded) {
+          showToast('Please upload images for all 4 languages.');
+          return;
+        }
+        const items: I18nItem[] = langs.map((lang) => ({
+          lang,
+          imageUrl: i18nPreviews[lang],
+        }));
+        const pack: I18nPack = { mode: 'screenshot', items };
+        const newMsg: Message = {
+          id: `i18n-${Date.now()}`,
+          type: 'i18n',
+          time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+          createdAt: new Date().toISOString(),
+          i18nPack: pack,
+        };
+        setFeedMessages((prev) => [...prev, newMsg]);
+        pendingScrollToBottom.current = true;
+        showToast('Multi-language post published!');
+        setI18nFiles({ en: null, es: null, fr: null, it: null });
+        setI18nPreviews({ en: '', es: '', fr: '', it: '' });
+      }
     } else {
       showToast('Saved (mock).');
     }
@@ -570,8 +719,8 @@ export default function HomePage() {
       time: newPhotoDayTimes[i]?.trim() || defaultTime,
       description: newPhotoDayDescs[i] || '',
     }));
-    setGalleryPhotos((prev) => [...newPhotos, ...prev]);
-    setCurrentPhotoIndex(0);
+    setGalleryPhotos((prev) => [...prev, ...newPhotos]);
+    setCurrentPhotoIndex(galleryPhotos.length + newPhotos.length - 1);
     setAddPhotoDayOpen(false);
     setNewPhotoDayFiles([]);
     setNewPhotoDayPreviews([]);
@@ -685,9 +834,10 @@ export default function HomePage() {
       { key: 'media', label: 'Photo / Video' },
       { key: 'audio', label: 'Audio' },
       { key: 'poll', label: 'Poll' },
+      { key: 'languages', label: '🌍 Languages' },
     ];
     return (
-      <div className="create-tabs">
+      <div className="create-tabs create-tabs--5">
         {tabs.map((tab) => (
           <button
             key={tab.key}
@@ -862,6 +1012,119 @@ export default function HomePage() {
               Add option
             </button>
           )}
+        </div>
+      );
+    }
+
+    if (createTab === 'languages') {
+      const languages: { code: I18nLang; label: string; flag: string }[] = [
+        { code: 'en', label: 'English', flag: '🇬🇧' },
+        { code: 'es', label: 'Spanish', flag: '🇪🇸' },
+        { code: 'fr', label: 'French', flag: '🇫🇷' },
+        { code: 'it', label: 'Italian', flag: '🇮🇹' },
+      ];
+
+      const handleI18nFileSelect = (lang: I18nLang, file: File | null) => {
+        if (file && file.type.startsWith('image/')) {
+          const preview = URL.createObjectURL(file);
+          setI18nFiles((prev) => ({ ...prev, [lang]: file }));
+          setI18nPreviews((prev) => ({ ...prev, [lang]: preview }));
+        }
+      };
+
+      const removeI18nImage = (lang: I18nLang) => {
+        setI18nFiles((prev) => ({ ...prev, [lang]: null }));
+        setI18nPreviews((prev) => ({ ...prev, [lang]: '' }));
+      };
+
+      return (
+        <div className="create-section">
+          <label className="create-label">Multi-Language Post</label>
+          <p className="create-note" style={{ marginBottom: '12px' }}>
+            Create a single post with content in 4 languages. All 4 languages are required.
+          </p>
+
+          {/* Mode Selector */}
+          <div className="i18n-mode-selector">
+            <button
+              type="button"
+              className={`i18n-mode-btn ${i18nMode === 'text' ? 'i18n-mode-btn--active' : ''}`}
+              onClick={() => setI18nMode('text')}
+            >
+              💬 Text Bubbles
+            </button>
+            <button
+              type="button"
+              className={`i18n-mode-btn ${i18nMode === 'screenshot' ? 'i18n-mode-btn--active' : ''}`}
+              onClick={() => setI18nMode('screenshot')}
+            >
+              📷 Screenshots
+            </button>
+          </div>
+
+          <p className="create-note" style={{ marginTop: '8px', marginBottom: '16px' }}>
+            {i18nMode === 'text'
+              ? 'Enter text for each language. Will show as 4 stacked message bubbles.'
+              : 'Upload an image for each language. Will show as a carousel.'}
+          </p>
+
+          {/* Language Entries */}
+          <div className="i18n-entries">
+            {languages.map(({ code, label, flag }) => (
+              <div key={code} className="i18n-entry">
+                <div className="i18n-entry__header">
+                  <span className="i18n-entry__flag">{flag}</span>
+                  <span className="i18n-entry__label">{label}</span>
+                  <span className="i18n-entry__code">{code.toUpperCase()}</span>
+                </div>
+                {i18nMode === 'text' ? (
+                  <textarea
+                    value={i18nTexts[code]}
+                    onChange={(e) => setI18nTexts((prev) => ({ ...prev, [code]: e.target.value }))}
+                    className="i18n-entry__textarea"
+                    placeholder={`Enter ${label} text...`}
+                    rows={3}
+                  />
+                ) : (
+                  <div className="i18n-entry__upload">
+                    {i18nPreviews[code] ? (
+                      <div className="i18n-preview-wrapper">
+                        <img src={i18nPreviews[code]} alt={`${label} preview`} className="i18n-preview-img" />
+                        <button
+                          type="button"
+                          className="i18n-preview-remove"
+                          onClick={() => removeI18nImage(code)}
+                          aria-label="Remove image"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="i18n-upload-btn"
+                        onClick={() => i18nFileInputRefs.current[code]?.click()}
+                      >
+                        {Icons.plus}
+                        <span>Upload {label}</span>
+                      </button>
+                    )}
+                    <input
+                      ref={(el) => { i18nFileInputRefs.current[code] = el; }}
+                      type="file"
+                      accept="image/*"
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        handleI18nFileSelect(code, file);
+                        if (e.target) e.target.value = '';
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       );
     }
@@ -1235,6 +1498,12 @@ export default function HomePage() {
           <div className="bottom-sheet">
             <div className="bottom-sheet__handle" />
             <div className="bottom-sheet__items">
+              {canInstall && !isStandalone && (
+                <button className="bottom-sheet__item" onClick={handleInstallClick}>
+                  <span className="bottom-sheet__icon">{Icons.download}</span>
+                  Add to Home Screen
+                </button>
+              )}
               <button className="bottom-sheet__item" onClick={() => navigateTo('gallery')}>
                 <span className="bottom-sheet__icon">{Icons.gallery}</span>
                 Gallery
@@ -1543,6 +1812,21 @@ export default function HomePage() {
         </div>
       )}
 
+      {showIosInstallHint && !isStandalone && (
+        <div className="install-hint">
+          <div className="install-hint__title">Add to Home Screen</div>
+          <div className="install-hint__text">Share -> Add to Home Screen</div>
+          <button
+            className="install-hint__close"
+            type="button"
+            aria-label="Dismiss add to home instructions"
+            onClick={() => setShowIosInstallHint(false)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {toastMessage && <div className="toast">{toastMessage}</div>}
     </>
   );
@@ -1573,6 +1857,153 @@ function MessageBubble({
   onOpenGallery,
   onShowToast,
 }: MessageBubbleProps) {
+  const [i18nCarouselIndex, setI18nCarouselIndex] = useState(0);
+
+  const langLabels: Record<I18nLang, { flag: string; code: string }> = {
+    en: { flag: '🇬🇧', code: 'EN' },
+    es: { flag: '🇪🇸', code: 'ES' },
+    fr: { flag: '🇫🇷', code: 'FR' },
+    it: { flag: '🇮🇹', code: 'IT' },
+  };
+
+  // Render i18n (multi-language) posts
+  if (message.type === 'i18n' && message.i18nPack) {
+    const { mode, items } = message.i18nPack;
+
+    if (mode === 'text') {
+      // Text bubble mode: render 4 stacked bubbles
+      return (
+        <div className="message message--i18n">
+          <div className="i18n-bubbles">
+            {items.map((item) => (
+              <div key={item.lang} className="i18n-bubble">
+                <div className="i18n-bubble__lang">
+                  <span className="i18n-bubble__flag">{langLabels[item.lang].flag}</span>
+                  <span className="i18n-bubble__code">{langLabels[item.lang].code}</span>
+                </div>
+                <div className="message__bubble message__bubble--text i18n-bubble__content">
+                  <p className="message__handwriting">{item.text}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="i18n-meta">
+            {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
+          </div>
+
+          {reaction && <div className="message__reaction">{reaction}</div>}
+
+          <div className="actions">
+            <button className="actions__btn" onClick={onSay}>
+              {Icons.message}
+              <span>Say</span>
+            </button>
+            <button
+              className={`actions__btn ${isBookmarked ? 'actions__btn--active' : ''}`}
+              onClick={onBookmark}
+            >
+              {isBookmarked ? Icons.bookmarkFilled : Icons.bookmark}
+              <span>{isBookmarked ? 'Saved' : 'Read later'}</span>
+            </button>
+            <button className="actions__btn" onClick={onReact}>
+              {Icons.sparkle}
+              <span>React</span>
+            </button>
+          </div>
+
+          {emojiPanelOpen && (
+            <div className="emoji-panel">
+              {emojis.map((emoji) => (
+                <button key={emoji} className="emoji-panel__btn" onClick={() => onSelectEmoji(emoji)}>
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Screenshot mode: render a carousel
+    const currentItem = items[i18nCarouselIndex];
+    const images = items.map((item) => item.imageUrl || '').filter(Boolean);
+
+    return (
+      <div className="message message--i18n">
+        <div className="i18n-carousel">
+          <div className="i18n-carousel__image-container">
+            {currentItem.imageUrl && (
+              <img
+                src={currentItem.imageUrl}
+                alt={`${langLabels[currentItem.lang].code} version`}
+                className="i18n-carousel__image"
+                onClick={() => onOpenGallery(images)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onOpenGallery(images);
+                  }
+                }}
+              />
+            )}
+            <div className="i18n-carousel__lang-badge">
+              <span className="i18n-carousel__flag">{langLabels[currentItem.lang].flag}</span>
+              <span className="i18n-carousel__code">{langLabels[currentItem.lang].code}</span>
+            </div>
+          </div>
+          <div className="i18n-carousel__nav">
+            {items.map((item, idx) => (
+              <button
+                key={item.lang}
+                type="button"
+                className={`i18n-carousel__dot ${idx === i18nCarouselIndex ? 'i18n-carousel__dot--active' : ''}`}
+                onClick={() => setI18nCarouselIndex(idx)}
+                aria-label={`Show ${langLabels[item.lang].code} version`}
+              >
+                {langLabels[item.lang].flag}
+              </button>
+            ))}
+          </div>
+          <div className="i18n-carousel__meta">
+            {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
+          </div>
+        </div>
+
+        {reaction && <div className="message__reaction">{reaction}</div>}
+
+        <div className="actions">
+          <button className="actions__btn" onClick={onSay}>
+            {Icons.message}
+            <span>Say</span>
+          </button>
+          <button
+            className={`actions__btn ${isBookmarked ? 'actions__btn--active' : ''}`}
+            onClick={onBookmark}
+          >
+            {isBookmarked ? Icons.bookmarkFilled : Icons.bookmark}
+            <span>{isBookmarked ? 'Saved' : 'Read later'}</span>
+          </button>
+          <button className="actions__btn" onClick={onReact}>
+            {Icons.sparkle}
+            <span>React</span>
+          </button>
+        </div>
+
+        {emojiPanelOpen && (
+          <div className="emoji-panel">
+            {emojis.map((emoji) => (
+              <button key={emoji} className="emoji-panel__btn" onClick={() => onSelectEmoji(emoji)}>
+                {emoji}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   if (message.type === 'poll') {
     const question = message.pollQuestion || '';
     const options = (message.pollOptions || []).slice(0, 4);

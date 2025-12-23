@@ -9,11 +9,27 @@ export interface Photo {
   description: string;
 }
 
+// Language pack for multi-language posts
+export type I18nLang = 'en' | 'es' | 'fr' | 'it';
+export type I18nMode = 'screenshot' | 'text';
+
+export interface I18nItem {
+  lang: I18nLang;
+  text?: string;
+  imageUrl?: string;
+}
+
+export interface I18nPack {
+  mode: I18nMode;
+  items: I18nItem[];
+}
+
 export interface Message {
   id: string;
-  type: 'photo' | 'text' | 'sticker' | 'poll';
+  type: 'photo' | 'text' | 'sticker' | 'poll' | 'i18n';
   time: string;
   createdAt?: string;
+  isTest?: boolean;
   imageUrl?: string;
   images?: string[];
   text?: string;
@@ -21,6 +37,7 @@ export interface Message {
   caption?: string; // For photo posts
   pollQuestion?: string;
   pollOptions?: string[];
+  i18nPack?: I18nPack; // Multi-language content
 }
 
 export interface AudioItem {
@@ -77,13 +94,15 @@ export const messages: Message[] = [
     type: 'text',
     time: '21:17',
     createdAt: '2025-12-13T21:17:00Z',
-    text: 'Иногда я не нахожу слов — только ноты и молчание между ними ✨',
+    isTest: true,
+    text: "Sometimes I can't find words — only notes and the silence between them ✨",
   },
   {
     id: 'm2',
     type: 'photo',
     time: '20:45',
     createdAt: '2025-12-13T20:45:00Z',
+    isTest: true,
     imageUrl: 'https://images.unsplash.com/photo-1455390582262-044cdead277a?w=400&h=300&fit=crop',
     images: [
       'https://images.unsplash.com/photo-1455390582262-044cdead277a?w=800&h=600&fit=crop',
@@ -96,13 +115,15 @@ export const messages: Message[] = [
     type: 'text',
     time: '19:30',
     createdAt: '2025-12-12T19:30:00Z',
-    text: 'Пишу для тебя, хотя не знаю кто ты. Может быть это и есть настоящая свобода 🤍',
+    isTest: true,
+    text: "I write for you even though I don't know who you are. Maybe that's freedom 🤍",
   },
   {
     id: 'm4',
     type: 'photo',
     time: '18:12',
     createdAt: '2025-12-12T18:12:00Z',
+    isTest: true,
     imageUrl: 'https://images.unsplash.com/photo-1517842645767-c639042777db?w=400&h=300&fit=crop',
     images: [
       'https://images.unsplash.com/photo-1517842645767-c639042777db?w=800&h=600&fit=crop',
@@ -114,20 +135,23 @@ export const messages: Message[] = [
     type: 'text',
     time: '16:55',
     createdAt: '2025-12-12T16:55:00Z',
-    text: 'Ночь, бумага, ручка. Больше ничего не нужно.',
+    isTest: true,
+    text: 'Night. Paper. Pen. Nothing else is needed.',
   },
   {
     id: 'm6',
     type: 'text',
     time: '14:20',
     createdAt: '2025-12-11T14:20:00Z',
-    text: 'Если бы я мог показать тебе то, что чувствую — я бы не писал песни 😊',
+    isTest: true,
+    text: "If I could show you what I feel — I wouldn't need to write songs 😊",
   },
   {
     id: 'm7',
     type: 'photo',
     time: '12:00',
     createdAt: '2025-12-11T12:00:00Z',
+    isTest: true,
     imageUrl: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=400&h=300&fit=crop',
     images: [
       'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=800&h=600&fit=crop',
@@ -141,7 +165,8 @@ export const messages: Message[] = [
     type: 'text',
     time: '09:15',
     createdAt: '2025-12-11T09:15:00Z',
-    text: 'Доброе утро. Сегодня будет хороший день — я это чувствую 🙏',
+    isTest: true,
+    text: 'Good morning. Today will be a good day — I can feel it 🙏',
   },
   // Sticker messages (Type C)
   {
@@ -149,42 +174,45 @@ export const messages: Message[] = [
     type: 'sticker',
     time: '22:30',
     createdAt: '2025-12-10T22:30:00Z',
+    isTest: true,
     imageUrl: 'https://images.unsplash.com/photo-1586350977771-b3b0abd50c82?w=400&h=300&fit=crop',
-    subtitle: 'Тёплые носки и горячий чай — всё что нужно в такой вечер',
+    subtitle: 'Warm socks and hot tea — everything you need on a night like this',
   },
   {
     id: 'm10',
     type: 'sticker',
     time: '17:45',
     createdAt: '2025-12-10T17:45:00Z',
+    isTest: true,
     imageUrl: 'https://images.unsplash.com/photo-1544967082-d9d25d867d66?w=400&h=300&fit=crop',
-    subtitle: 'Когда на улице холодно, а внутри уютно',
+    subtitle: "When it's cold outside but cozy inside",
   },
   {
     id: 'm11',
     type: 'sticker',
     time: '11:20',
     createdAt: '2025-12-10T11:20:00Z',
+    isTest: true,
     imageUrl: 'https://images.unsplash.com/photo-1513366208864-87536b8bd7b4?w=400&h=300&fit=crop',
-    subtitle: 'Маленькие радости делают большие дни',
+    subtitle: 'Small joys make the biggest days',
   },
 ];
 
 // Audio items
 export const audioItems: AudioItem[] = [
-  { id: 'v1', title: 'Мысли вслух — о новом альбоме', duration: '3:42', type: 'voice' },
-  { id: 'v2', title: 'Благодарность за поддержку', duration: '2:15', type: 'voice' },
-  { id: 'v3', title: 'История одной песни', duration: '5:08', type: 'voice' },
-  { id: 's1', title: 'Новая песня (demo)', duration: '4:21', type: 'music' },
-  { id: 's2', title: 'Акустическая версия', duration: '3:55', type: 'music' },
+  { id: 'v1', title: 'Thinking out loud — about the new album', duration: '3:42', type: 'voice' },
+  { id: 'v2', title: 'Gratitude for your support', duration: '2:15', type: 'voice' },
+  { id: 'v3', title: 'The story of a song', duration: '5:08', type: 'voice' },
+  { id: 's1', title: 'New song (demo)', duration: '4:21', type: 'music' },
+  { id: 's2', title: 'Acoustic version', duration: '3:55', type: 'music' },
   { id: 's3', title: 'Unreleased track', duration: '4:02', type: 'music' },
 ];
 
 // Fake comments
 export const fakeComments: Comment[] = [
-  { id: 'c1', author: 'Мария', text: 'Это так красиво... Спасибо что делишься ❤️' },
-  { id: 'c2', author: 'Алексей', text: 'Жду каждое твое сообщение!' },
-  { id: 'c3', author: 'Анна', text: 'Читаю и плачу. Ты говоришь то, что я чувствую 🤍' },
+  { id: 'c1', author: 'Maria', text: 'This is so beautiful... thank you for sharing ❤️' },
+  { id: 'c2', author: 'Alex', text: 'I look forward to every message!' },
+  { id: 'c3', author: 'Anna', text: 'I read and cry. You say what I feel 🤍' },
 ];
 
 // Emoji reactions
