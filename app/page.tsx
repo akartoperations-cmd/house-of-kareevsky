@@ -1815,7 +1815,7 @@ export default function HomePage() {
       {showIosInstallHint && !isStandalone && (
         <div className="install-hint">
           <div className="install-hint__title">Add to Home Screen</div>
-          <div className="install-hint__text">Share -> Add to Home Screen</div>
+          <div className="install-hint__text">Share -&gt; Add to Home Screen</div>
           <button
             className="install-hint__close"
             type="button"
