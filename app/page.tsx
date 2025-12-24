@@ -619,6 +619,10 @@ export default function HomePage() {
     }
   }, []);
 
+  const closeInstallInstructions = useCallback(() => {
+    setShowInstallInstructions(false);
+  }, []);
+
   const handleInstallClick = useCallback(async () => {
     if (isStandalone) return;
     if (isIosBrowser || !installPromptEvent) {
@@ -1756,13 +1760,13 @@ export default function HomePage() {
                   disabled={isStandalone}
                 >
                   <span className="bottom-sheet__icon">{Icons.download}</span>
-                  {installButtonLabel}
+                  Install app
                 </button>
               )}
               {isStandalone && (
                 <button className="bottom-sheet__item bottom-sheet__item--disabled" disabled>
                   <span className="bottom-sheet__icon">{Icons.download}</span>
-                  {installButtonLabel}
+                  Installed
                 </button>
               )}
               <button className="bottom-sheet__item" onClick={() => navigateTo('gallery')}>
@@ -2127,12 +2131,12 @@ export default function HomePage() {
         <div className="install-banner">
           <div className="install-banner__text">
             {isIosBrowser
-              ? 'Добавьте приложение на экран – удобный доступ одним тапом.'
-              : 'Установите приложение, чтобы открывать его как PWA.'}
+              ? 'Add to Home Screen for easy access with one tap.'
+              : 'Install the app to open it as a PWA.'}
           </div>
           <div className="install-banner__actions">
             <button className="install-banner__btn" onClick={handleInstallClick}>
-              {installButtonLabel}
+              Install
             </button>
             <button
               className="install-banner__close"
@@ -2150,7 +2154,7 @@ export default function HomePage() {
         <div className="modal-overlay" onClick={closeInstallInstructions}>
           <div className="modal install-modal" onClick={(e) => e.stopPropagation()}>
             <div className="install-modal__header">
-              <h2 className="install-modal__title">Как установить</h2>
+              <h2 className="install-modal__title">How to install</h2>
               <button
                 className="install-modal__close"
                 onClick={closeInstallInstructions}
@@ -2162,15 +2166,15 @@ export default function HomePage() {
             <div className="install-modal__body">
               {isIosBrowser ? (
                 <ol className="install-modal__steps">
-                  <li>1. Нажмите Share (кнопка со стрелкой в Safari).</li>
-                  <li>2. Выберите "Add to Home Screen" / "На экран Домой".</li>
-                  <li>3. Подтвердите добавление.</li>
+                  <li>1. Tap the Share button (arrow icon in Safari).</li>
+                  <li>2. Select &quot;Add to Home Screen&quot;.</li>
+                  <li>3. Confirm the installation.</li>
                 </ol>
               ) : (
                 <ol className="install-modal__steps">
-                  <li>1. Откройте меню браузера (... или "Поделиться").</li>
-                  <li>2. Выберите "Установить приложение" или "Добавить на главный экран".</li>
-                  <li>3. Подтвердите установку.</li>
+                  <li>1. Open the browser menu (... or Share icon).</li>
+                  <li>2. Select &quot;Install app&quot; or &quot;Add to Home Screen&quot;.</li>
+                  <li>3. Confirm the installation.</li>
                 </ol>
               )}
             </div>

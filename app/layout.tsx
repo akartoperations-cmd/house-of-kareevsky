@@ -12,7 +12,10 @@ export const metadata: Metadata = {
     title: "House of Kareevsky",
   },
   icons: {
-    icon: "/icons/icon-192x192.png",
+    icon: [
+      { url: "/icons/icon.svg", type: "image/svg+xml" },
+      { url: "/icons/icon-192x192.png", sizes: "192x192", type: "image/png" },
+    ],
     apple: "/icons/icon-192x192.png",
   },
 };
