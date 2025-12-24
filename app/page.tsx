@@ -234,6 +234,7 @@ export default function HomePage() {
   const [createTextBody, setCreateTextBody] = useState('');
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [mediaPreviews, setMediaPreviews] = useState<string[]>([]);
+  const [mediaIsVideo, setMediaIsVideo] = useState(false);
   const [mediaCaption, setMediaCaption] = useState('');
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [pollQuestion, setPollQuestion] = useState('');
@@ -241,8 +242,18 @@ export default function HomePage() {
   // Multi-language post state
   const [i18nMode, setI18nMode] = useState<I18nMode>('text');
   const [i18nTexts, setI18nTexts] = useState<Record<I18nLang, string>>({ en: '', es: '', fr: '', it: '' });
-  const [i18nFiles, setI18nFiles] = useState<Record<I18nLang, File | null>>({ en: null, es: null, fr: null, it: null });
-  const [i18nPreviews, setI18nPreviews] = useState<Record<I18nLang, string>>({ en: '', es: '', fr: '', it: '' });
+  const [i18nFiles, setI18nFiles] = useState<Record<I18nLang, File[]>>({
+    en: [],
+    es: [],
+    fr: [],
+    it: [],
+  });
+  const [i18nPreviews, setI18nPreviews] = useState<Record<I18nLang, string[]>>({
+    en: [],
+    es: [],
+    fr: [],
+    it: [],
+  });
   const i18nFileInputRefs = useRef<Record<I18nLang, HTMLInputElement | null>>({ en: null, es: null, fr: null, it: null });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [photoAboutOpen, setPhotoAboutOpen] = useState(false);
@@ -256,11 +267,23 @@ export default function HomePage() {
   const [feedMessages, setFeedMessages] = useState<Message[]>(() => [...messages].reverse());
   const [galleryTab, setGalleryTab] = useState<GalleryTab>('photoOfDay');
   const [installPromptEvent, setInstallPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
-  const [canInstall, setCanInstall] = useState(false);
-  const [showIosInstallHint, setShowIosInstallHint] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
+  const [isIosBrowser, setIsIosBrowser] = useState(false);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
+  const [installBannerDismissed, setInstallBannerDismissed] = useState(false);
+  const [showInstallInstructions, setShowInstallInstructions] = useState(false);
   const pendingScrollToBottom = useRef(false);
   const didInitialScroll = useRef(false);
+  const scrollElementRef = useRef<HTMLElement | null>(null);
+  const isNearBottomRef = useRef(true);
+  const photoViewerContainerRef = useRef<HTMLDivElement | null>(null);
+  const photoSwipeStart = useRef<{ x: number; y: number } | null>(null);
+  const [isPortrait, setIsPortrait] = useState(true);
+  const [currentImageAspect, setCurrentImageAspect] = useState<number | null>(null);
+  const [showRotateHint, setShowRotateHint] = useState(false);
+  const [rotateHintDismissed, setRotateHintDismissed] = useState(false);
+  const [canFullscreen, setCanFullscreen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const isPhotoOpen = Boolean(photoViewer);
 
   const touchStartX = useRef<number>(0);
@@ -310,26 +333,42 @@ export default function HomePage() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
+    scrollElementRef.current =
+      (document.scrollingElement as HTMLElement | null) || document.documentElement;
+
+    const dismissed = window.localStorage.getItem('install-banner-dismissed') === '1';
+    setInstallBannerDismissed(dismissed);
+
     const standalone = isStandaloneDisplay();
     setIsStandalone(standalone);
+
+    const ios = isIosSafari();
+    setIsIosBrowser(ios);
+
+    if (!standalone && !dismissed) {
+      setShowInstallBanner(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
 
     const handleBeforeInstallPrompt = (event: Event) => {
       const promptEvent = event as BeforeInstallPromptEvent;
       event.preventDefault();
       setInstallPromptEvent(promptEvent);
-      setCanInstall(true);
+      if (!isStandalone && !installBannerDismissed) {
+        setShowInstallBanner(true);
+      }
     };
 
     const handleAppInstalled = () => {
-      setCanInstall(false);
       setInstallPromptEvent(null);
-      setShowIosInstallHint(false);
       setIsStandalone(true);
+      setShowInstallBanner(false);
+      setInstallBannerDismissed(true);
+      window.localStorage.setItem('install-banner-dismissed', '1');
     };
-
-    if (!standalone && isIosSafari()) {
-      setShowIosInstallHint(true);
-    }
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
@@ -338,6 +377,73 @@ export default function HomePage() {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
     };
+  }, [installBannerDismissed, isStandalone]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    setCanFullscreen(Boolean(document.fullscreenEnabled));
+    const dismissed = window.localStorage.getItem('rotate-hint-dismissed');
+    if (dismissed === '1') setRotateHintDismissed(true);
+
+    const handleResize = () => {
+      setIsPortrait(window.innerHeight >= window.innerWidth);
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  const evaluateRotateHint = useCallback(() => {
+    if (rotateHintDismissed) {
+      setShowRotateHint(false);
+      return;
+    }
+    if (!isPortrait || !currentImageAspect) {
+      setShowRotateHint(false);
+      return;
+    }
+    const isLandscapePhoto = currentImageAspect > 1.2;
+    setShowRotateHint(isLandscapePhoto);
+  }, [currentImageAspect, isPortrait, rotateHintDismissed]);
+
+  useEffect(() => {
+    evaluateRotateHint();
+  }, [evaluateRotateHint]);
+
+  useEffect(() => {
+    setCurrentImageAspect(null);
+  }, [photoViewer?.index, photoViewer?.images]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleScroll = () => {
+      const target = scrollElementRef.current || document.scrollingElement || document.documentElement;
+      if (!target) return;
+      const distance = target.scrollHeight - (target.scrollTop + target.clientHeight);
+      isNearBottomRef.current = distance < 120;
+    };
+    handleScroll();
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const scrollToBottomImmediate = useCallback(() => {
+    const target = scrollElementRef.current || document.scrollingElement || document.documentElement;
+    if (!target) return;
+    target.scrollTo({ top: target.scrollHeight, behavior: 'auto' });
+    isNearBottomRef.current = true;
   }, []);
 
   useEffect(() => {
@@ -345,19 +451,15 @@ export default function HomePage() {
 
     if (!didInitialScroll.current) {
       didInitialScroll.current = true;
-      requestAnimationFrame(() => {
-        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'auto' });
-      });
+      requestAnimationFrame(scrollToBottomImmediate);
       return;
     }
 
-    if (pendingScrollToBottom.current) {
+    if (pendingScrollToBottom.current && isNearBottomRef.current) {
       pendingScrollToBottom.current = false;
-      requestAnimationFrame(() => {
-        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
-      });
+      requestAnimationFrame(scrollToBottomImmediate);
     }
-  }, [activeView, feedMessages.length]);
+  }, [activeView, feedItems.length, scrollToBottomImmediate]);
 
   const goToPrevPhoto = useCallback(() => {
     if (currentPhotoIndex > 0) {
@@ -409,8 +511,35 @@ export default function HomePage() {
     });
   };
 
+  const handlePhotoViewerTouchStart = (e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    photoSwipeStart.current = { x: touch.clientX, y: touch.clientY };
+  };
+
+  const handlePhotoViewerTouchEnd = (e: React.TouchEvent) => {
+    if (!photoSwipeStart.current) return;
+    const touch = e.changedTouches[0];
+    const dx = touch.clientX - photoSwipeStart.current.x;
+    const dy = touch.clientY - photoSwipeStart.current.y;
+    photoSwipeStart.current = null;
+    const threshold = 40;
+    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > threshold) {
+      stepPhotoViewer(dx < 0 ? 1 : -1);
+    }
+  };
+
   const closePhotoViewer = () => {
     setPhotoViewer(null);
+    setShowRotateHint(false);
+  };
+
+  const toggleFullscreen = () => {
+    if (!canFullscreen || !photoViewerContainerRef.current) return;
+    if (!document.fullscreenElement) {
+      photoViewerContainerRef.current.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -482,19 +611,31 @@ export default function HomePage() {
   const openMenu = () => setMenuOpen(true);
   const closeMenu = () => setMenuOpen(false);
 
+  const dismissInstallBanner = useCallback(() => {
+    setShowInstallBanner(false);
+    setInstallBannerDismissed(true);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('install-banner-dismissed', '1');
+    }
+  }, []);
+
   const handleInstallClick = useCallback(async () => {
-    if (!installPromptEvent) return;
-    setCanInstall(false);
+    if (isStandalone) return;
+    if (isIosBrowser || !installPromptEvent) {
+      setShowInstallInstructions(true);
+      return;
+    }
     try {
       installPromptEvent.prompt();
       const choice = await installPromptEvent.userChoice;
       if (choice?.outcome === 'accepted') {
         setInstallPromptEvent(null);
+        dismissInstallBanner();
       }
     } catch {
-      setCanInstall(Boolean(installPromptEvent));
+      setShowInstallInstructions(true);
     }
-  }, [installPromptEvent]);
+  }, [dismissInstallBanner, installPromptEvent, isIosBrowser, isStandalone]);
 
   const navigateTo = (view: View) => {
     if ((view === 'create' || view === 'personal') && !isAdmin) {
@@ -506,11 +647,17 @@ export default function HomePage() {
       setAdminMessages((prev) => prev.map((m) => ({ ...m, isUnread: false })));
       setAdminInbox({ hasUnread: false, count: 0 });
     }
+    if (view === 'home') {
+      pendingScrollToBottom.current = true;
+    }
     setActiveView(view);
     setMenuOpen(false);
   };
 
-  const goHome = () => setActiveView('home');
+  const goHome = () => {
+    pendingScrollToBottom.current = true;
+    setActiveView('home');
+  };
 
   const handleSignOut = async () => {
     const supabase = getSupabaseBrowserClient();
@@ -567,6 +714,7 @@ export default function HomePage() {
   const resetMediaSelection = () => {
     setMediaFiles([]);
     setMediaPreviews([]);
+    setMediaIsVideo(false);
   };
 
   const resetAudioSelection = () => {
@@ -574,6 +722,10 @@ export default function HomePage() {
   };
 
   const addMoreMedia = (newFiles: File[]) => {
+    if (mediaIsVideo) {
+      showToast('Video posts support only one file.', 2000);
+      return;
+    }
     if (mediaFiles.length + newFiles.length > 10) {
       showToast('Maximum 10 photos per post.', 2000);
       return;
@@ -584,9 +736,31 @@ export default function HomePage() {
     setMediaPreviews((prev) => [...prev, ...newPreviews]);
   };
 
+  const processMediaSelection = (files: File[]) => {
+    if (files.length === 0) return;
+    const firstVideo = files.find((f) => f.type.startsWith('video/'));
+    if (firstVideo) {
+      if (files.length > 1) {
+        showToast('Video posts support one file at a time.', 2500);
+      }
+      setMediaIsVideo(true);
+      setMediaFiles([firstVideo]);
+      setMediaPreviews([URL.createObjectURL(firstVideo)]);
+      return;
+    }
+    const filtered = files.filter((f) => f.type.startsWith('image/')).slice(0, 10);
+    const previews = filtered.map((f) => URL.createObjectURL(f));
+    setMediaIsVideo(false);
+    setMediaFiles(filtered);
+    setMediaPreviews(previews);
+  };
+
   const removeMediaAtIndex = (idx: number) => {
     setMediaFiles((prev) => prev.filter((_, i) => i !== idx));
     setMediaPreviews((prev) => prev.filter((_, i) => i !== idx));
+    if (mediaIsVideo) {
+      setMediaIsVideo(false);
+    }
   };
 
   const removePhotoDayAtIndex = (idx: number) => {
@@ -615,21 +789,36 @@ export default function HomePage() {
       setCreateTextBody('');
     } else if (createTab === 'media') {
       if (mediaFiles.length === 0) return;
-      const newMsg: Message = {
-        id: `m-${Date.now()}`,
-        type: 'photo',
-        time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
-        createdAt: new Date().toISOString(),
-        imageUrl: mediaPreviews[0] || '',
-        images: mediaPreviews,
-        caption: mediaCaption.trim() || undefined,
-      };
-      setFeedMessages((prev) => [...prev, newMsg]);
-      pendingScrollToBottom.current = true;
-      showToast(`Photo post with ${mediaFiles.length} image(s) published (mock).`);
+      if (mediaIsVideo) {
+        const newMsg: Message = {
+          id: `v-${Date.now()}`,
+          type: 'video',
+          time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+          createdAt: new Date().toISOString(),
+          videoUrl: mediaPreviews[0] || '',
+          caption: mediaCaption.trim() || undefined,
+        };
+        setFeedMessages((prev) => [...prev, newMsg]);
+        pendingScrollToBottom.current = true;
+        showToast('Video post published (mock).');
+      } else {
+        const newMsg: Message = {
+          id: `m-${Date.now()}`,
+          type: 'photo',
+          time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+          createdAt: new Date().toISOString(),
+          imageUrl: mediaPreviews[0] || '',
+          images: mediaPreviews,
+          caption: mediaCaption.trim() || undefined,
+        };
+        setFeedMessages((prev) => [...prev, newMsg]);
+        pendingScrollToBottom.current = true;
+        showToast(`Photo post with ${mediaFiles.length} image(s) published (mock).`);
+      }
       setMediaFiles([]);
       setMediaPreviews([]);
       setMediaCaption('');
+      setMediaIsVideo(false);
     } else if (createTab === 'audio') {
       if (!audioFile) return;
       showToast('Audio post saved (mock).');
@@ -678,14 +867,15 @@ export default function HomePage() {
         setI18nTexts({ en: '', es: '', fr: '', it: '' });
       } else {
         // Screenshot mode - validate all images are uploaded
-        const allUploaded = langs.every((l) => i18nPreviews[l].length > 0);
+        const allUploaded = langs.every((l) => (i18nPreviews[l] || []).length > 0);
         if (!allUploaded) {
           showToast('Please upload images for all 4 languages.');
           return;
         }
         const items: I18nItem[] = langs.map((lang) => ({
           lang,
-          imageUrl: i18nPreviews[lang],
+          imageUrl: i18nPreviews[lang][0], // legacy single-image consumers
+          imageUrls: [...i18nPreviews[lang]],
         }));
         const pack: I18nPack = { mode: 'screenshot', items };
         const newMsg: Message = {
@@ -698,8 +888,8 @@ export default function HomePage() {
         setFeedMessages((prev) => [...prev, newMsg]);
         pendingScrollToBottom.current = true;
         showToast('Multi-language post published!');
-        setI18nFiles({ en: null, es: null, fr: null, it: null });
-        setI18nPreviews({ en: '', es: '', fr: '', it: '' });
+        setI18nFiles({ en: [], es: [], fr: [], it: [] });
+        setI18nPreviews({ en: [], es: [], fr: [], it: [] });
       }
     } else {
       showToast('Saved (mock).');
@@ -719,8 +909,11 @@ export default function HomePage() {
       time: newPhotoDayTimes[i]?.trim() || defaultTime,
       description: newPhotoDayDescs[i] || '',
     }));
-    setGalleryPhotos((prev) => [...prev, ...newPhotos]);
-    setCurrentPhotoIndex(galleryPhotos.length + newPhotos.length - 1);
+    setGalleryPhotos((prev) => {
+      const next = [...prev, ...newPhotos];
+      setCurrentPhotoIndex(next.length - 1);
+      return next;
+    });
     setAddPhotoDayOpen(false);
     setNewPhotoDayFiles([]);
     setNewPhotoDayPreviews([]);
@@ -877,21 +1070,17 @@ export default function HomePage() {
     if (createTab === 'media') {
       return (
         <div className="create-section">
-          <label className="create-label">Upload photos (1-10)</label>
+          <label className="create-label">Upload photos or video (photos 1-10, video x1)</label>
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/*,video/*"
             multiple
             onChange={(e) => {
               const files = Array.from(e.target.files || []);
               if (files.length > 0) {
                 if (mediaFiles.length === 0) {
-                  // Initial selection
-                  const filtered = files.filter((f) => f.type.startsWith('image/')).slice(0, 10);
-                  const previews = filtered.map((f) => URL.createObjectURL(f));
-                  setMediaFiles(filtered);
-                  setMediaPreviews(previews);
+                  processMediaSelection(files);
                 } else {
                   addMoreMedia(files);
                 }
@@ -905,28 +1094,39 @@ export default function HomePage() {
           {mediaFiles.length > 0 && (
             <div className="create-card">
               <div className="create-file-name">
-                {mediaFiles.length} photo{mediaFiles.length !== 1 ? 's' : ''} selected
-                {mediaFiles.length < 10 && (
-                  <span style={{ color: 'var(--text-secondary)', marginLeft: '8px' }}>
-                    (max 10)
-                  </span>
+                {mediaIsVideo
+                  ? `${mediaFiles[0].name} (video)`
+                  : `${mediaFiles.length} photo${mediaFiles.length !== 1 ? 's' : ''} selected`}
+                {!mediaIsVideo && mediaFiles.length < 10 && (
+                  <span style={{ color: 'var(--text-secondary)', marginLeft: '8px' }}>(max 10)</span>
                 )}
               </div>
-              <div className="create-previews-grid">
+              <div className="create-previews-grid" style={{ gridTemplateColumns: mediaIsVideo ? '1fr' : undefined }}>
                 {mediaPreviews.map((src, i) => (
                   <div key={i} className="create-preview-wrapper">
-                    <img src={src} alt="" className="create-preview-img" />
+                    {mediaIsVideo ? (
+                      <video
+                        src={src}
+                        controls
+                        playsInline
+                        preload="metadata"
+                        className="create-preview-img"
+                        style={{ objectFit: 'contain' }}
+                      />
+                    ) : (
+                      <img src={src} alt="" className="create-preview-img" />
+                    )}
                     <button
                       type="button"
                       className="create-preview-remove"
                       onClick={() => removeMediaAtIndex(i)}
-                      aria-label="Remove image"
+                      aria-label="Remove file"
                     >
                       ×
                     </button>
                   </div>
                 ))}
-                {mediaFiles.length < 10 && (
+                {!mediaIsVideo && mediaFiles.length < 10 && (
                   <button
                     type="button"
                     className="create-preview-add"
@@ -1024,17 +1224,41 @@ export default function HomePage() {
         { code: 'it', label: 'Italian', flag: '🇮🇹' },
       ];
 
-      const handleI18nFileSelect = (lang: I18nLang, file: File | null) => {
-        if (file && file.type.startsWith('image/')) {
-          const preview = URL.createObjectURL(file);
-          setI18nFiles((prev) => ({ ...prev, [lang]: file }));
-          setI18nPreviews((prev) => ({ ...prev, [lang]: preview }));
-        }
+      const handleI18nFileSelect = (lang: I18nLang, files: FileList | null) => {
+        if (!files || files.length === 0) return;
+        const accepted = Array.from(files).filter((f) => f.type.startsWith('image/'));
+        if (accepted.length === 0) return;
+        const previews = accepted.map((f) => URL.createObjectURL(f));
+        setI18nFiles((prev) => ({ ...prev, [lang]: [...(prev[lang] || []), ...accepted] }));
+        setI18nPreviews((prev) => ({ ...prev, [lang]: [...(prev[lang] || []), ...previews] }));
       };
 
-      const removeI18nImage = (lang: I18nLang) => {
-        setI18nFiles((prev) => ({ ...prev, [lang]: null }));
-        setI18nPreviews((prev) => ({ ...prev, [lang]: '' }));
+      const removeI18nImage = (lang: I18nLang, idx: number) => {
+        setI18nFiles((prev) => ({
+          ...prev,
+          [lang]: (prev[lang] || []).filter((_, i) => i !== idx),
+        }));
+        setI18nPreviews((prev) => ({
+          ...prev,
+          [lang]: (prev[lang] || []).filter((_, i) => i !== idx),
+        }));
+      };
+
+      const moveI18nImage = (lang: I18nLang, idx: number, direction: -1 | 1) => {
+        setI18nFiles((prev) => {
+          const list = [...(prev[lang] || [])];
+          const target = idx + direction;
+          if (target < 0 || target >= list.length) return prev;
+          [list[idx], list[target]] = [list[target], list[idx]];
+          return { ...prev, [lang]: list };
+        });
+        setI18nPreviews((prev) => {
+          const list = [...(prev[lang] || [])];
+          const target = idx + direction;
+          if (target < 0 || target >= list.length) return prev;
+          [list[idx], list[target]] = [list[target], list[idx]];
+          return { ...prev, [lang]: list };
+        });
       };
 
       return (
@@ -1077,51 +1301,75 @@ export default function HomePage() {
                   <span className="i18n-entry__label">{label}</span>
                   <span className="i18n-entry__code">{code.toUpperCase()}</span>
                 </div>
-                {i18nMode === 'text' ? (
-                  <textarea
-                    value={i18nTexts[code]}
-                    onChange={(e) => setI18nTexts((prev) => ({ ...prev, [code]: e.target.value }))}
-                    className="i18n-entry__textarea"
-                    placeholder={`Enter ${label} text...`}
-                    rows={3}
-                  />
-                ) : (
-                  <div className="i18n-entry__upload">
-                    {i18nPreviews[code] ? (
-                      <div className="i18n-preview-wrapper">
-                        <img src={i18nPreviews[code]} alt={`${label} preview`} className="i18n-preview-img" />
-                        <button
-                          type="button"
-                          className="i18n-preview-remove"
-                          onClick={() => removeI18nImage(code)}
-                          aria-label="Remove image"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className="i18n-upload-btn"
-                        onClick={() => i18nFileInputRefs.current[code]?.click()}
-                      >
-                        {Icons.plus}
-                        <span>Upload {label}</span>
-                      </button>
-                    )}
-                    <input
-                      ref={(el) => { i18nFileInputRefs.current[code] = el; }}
-                      type="file"
-                      accept="image/*"
-                      style={{ display: 'none' }}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0] || null;
-                        handleI18nFileSelect(code, file);
-                        if (e.target) e.target.value = '';
-                      }}
-                    />
-                  </div>
-                )}
+                 {i18nMode === 'text' ? (
+                   <textarea
+                     value={i18nTexts[code]}
+                     onChange={(e) => setI18nTexts((prev) => ({ ...prev, [code]: e.target.value }))}
+                     className="i18n-entry__textarea"
+                     placeholder={`Enter ${label} text...`}
+                     rows={3}
+                   />
+                 ) : (
+                   <div className="i18n-entry__upload">
+                     <div className="i18n-preview-list">
+                       {(i18nPreviews[code] || []).map((preview, idx) => (
+                         <div key={`${code}-${idx}`} className="i18n-preview-wrapper">
+                           <img src={preview} alt={`${label} preview ${idx + 1}`} className="i18n-preview-img" />
+                           <div className="i18n-preview-actions">
+                             <button
+                               type="button"
+                               className="i18n-preview-move"
+                               onClick={() => moveI18nImage(code, idx, -1)}
+                               disabled={idx === 0}
+                               aria-label="Move up"
+                             >
+                               ↑
+                             </button>
+                             <button
+                               type="button"
+                               className="i18n-preview-move"
+                               onClick={() => moveI18nImage(code, idx, 1)}
+                               disabled={idx === (i18nPreviews[code]?.length || 0) - 1}
+                               aria-label="Move down"
+                             >
+                               ↓
+                             </button>
+                             <button
+                               type="button"
+                               className="i18n-preview-remove"
+                               onClick={() => removeI18nImage(code, idx)}
+                               aria-label="Remove image"
+                             >
+                               ×
+                             </button>
+                           </div>
+                         </div>
+                       ))}
+                     </div>
+                     <button
+                       type="button"
+                       className="i18n-upload-btn"
+                       onClick={() => i18nFileInputRefs.current[code]?.click()}
+                     >
+                       {Icons.plus}
+                       <span>{(i18nPreviews[code] || []).length ? 'Add more' : `Upload ${label}`}</span>
+                     </button>
+                     <input
+                       ref={(el) => {
+                         i18nFileInputRefs.current[code] = el;
+                       }}
+                       type="file"
+                       accept="image/*"
+                       multiple
+                       style={{ display: 'none' }}
+                       onChange={(e) => {
+                         const fileList = e.target.files || null;
+                         handleI18nFileSelect(code, fileList);
+                         if (e.target) e.target.value = '';
+                       }}
+                     />
+                   </div>
+                 )}
               </div>
             ))}
           </div>
@@ -1496,12 +1744,25 @@ export default function HomePage() {
         <>
           <div className="backdrop" onClick={closeMenu} />
           <div className="bottom-sheet">
+            <button className="bottom-sheet__close-btn" onClick={closeMenu} aria-label="Close menu">
+              ×
+            </button>
             <div className="bottom-sheet__handle" />
             <div className="bottom-sheet__items">
-              {canInstall && !isStandalone && (
-                <button className="bottom-sheet__item" onClick={handleInstallClick}>
+              {!isStandalone && (
+                <button
+                  className="bottom-sheet__item"
+                  onClick={handleInstallClick}
+                  disabled={isStandalone}
+                >
                   <span className="bottom-sheet__icon">{Icons.download}</span>
-                  Add to Home Screen
+                  {installButtonLabel}
+                </button>
+              )}
+              {isStandalone && (
+                <button className="bottom-sheet__item bottom-sheet__item--disabled" disabled>
+                  <span className="bottom-sheet__icon">{Icons.download}</span>
+                  {installButtonLabel}
                 </button>
               )}
               <button className="bottom-sheet__item" onClick={() => navigateTo('gallery')}>
@@ -1683,17 +1944,46 @@ export default function HomePage() {
       )}
 
       {photoViewer && (
-        <div className="photo-viewer" onClick={closePhotoViewer}>
-          <div className="photo-viewer__content" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="photo-viewer"
+          ref={photoViewerContainerRef}
+          onClick={closePhotoViewer}
+        >
+          <div
+            className="photo-viewer__content"
+            onClick={(e) => e.stopPropagation()}
+            onTouchStart={handlePhotoViewerTouchStart}
+            onTouchEnd={handlePhotoViewerTouchEnd}
+          >
             <img
               src={photoViewer.images[photoViewer.index]}
               alt=""
               className="photo-viewer__image"
+              onLoad={(e) => {
+                const img = e.currentTarget;
+                setCurrentImageAspect(img.naturalWidth / Math.max(1, img.naturalHeight));
+              }}
             />
 
             <button className="photo-viewer__close" onClick={closePhotoViewer} aria-label="Close">
               {Icons.close}
             </button>
+
+            <div className="photo-viewer__top-actions">
+              {canFullscreen && (
+                <button
+                  type="button"
+                  className="photo-viewer__fs-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleFullscreen();
+                  }}
+                  aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+                >
+                  {isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                </button>
+              )}
+            </div>
 
             {photoViewer.images.length > 1 && (
               <div className="photo-viewer__nav">
@@ -1729,6 +2019,27 @@ export default function HomePage() {
                     {[photoViewer.date, photoViewer.time].filter(Boolean).join(' • ')}
                   </div>
                 )}
+              </div>
+            )}
+
+            {showRotateHint && (
+              <div className="rotate-hint">
+                <span>Поверни телефон чтобы открыть полностью</span>
+                <button
+                  type="button"
+                  className="rotate-hint__close"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowRotateHint(false);
+                    setRotateHintDismissed(true);
+                    if (typeof window !== 'undefined') {
+                      window.localStorage.setItem('rotate-hint-dismissed', '1');
+                    }
+                  }}
+                  aria-label="Dismiss hint"
+                >
+                  ×
+                </button>
               </div>
             )}
           </div>
@@ -1812,18 +2123,58 @@ export default function HomePage() {
         </div>
       )}
 
-      {showIosInstallHint && !isStandalone && (
-        <div className="install-hint">
-          <div className="install-hint__title">Add to Home Screen</div>
-          <div className="install-hint__text">Share -&gt; Add to Home Screen</div>
-          <button
-            className="install-hint__close"
-            type="button"
-            aria-label="Dismiss add to home instructions"
-            onClick={() => setShowIosInstallHint(false)}
-          >
-            ×
-          </button>
+      {showInstallBanner && !isStandalone && (
+        <div className="install-banner">
+          <div className="install-banner__text">
+            {isIosBrowser
+              ? 'Добавьте приложение на экран – удобный доступ одним тапом.'
+              : 'Установите приложение, чтобы открывать его как PWA.'}
+          </div>
+          <div className="install-banner__actions">
+            <button className="install-banner__btn" onClick={handleInstallClick}>
+              {installButtonLabel}
+            </button>
+            <button
+              className="install-banner__close"
+              type="button"
+              aria-label="Dismiss install banner"
+              onClick={dismissInstallBanner}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showInstallInstructions && (
+        <div className="modal-overlay" onClick={closeInstallInstructions}>
+          <div className="modal install-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="install-modal__header">
+              <h2 className="install-modal__title">Как установить</h2>
+              <button
+                className="install-modal__close"
+                onClick={closeInstallInstructions}
+                aria-label="Close install instructions"
+              >
+                ×
+              </button>
+            </div>
+            <div className="install-modal__body">
+              {isIosBrowser ? (
+                <ol className="install-modal__steps">
+                  <li>1. Нажмите Share (кнопка со стрелкой в Safari).</li>
+                  <li>2. Выберите "Add to Home Screen" / "На экран Домой".</li>
+                  <li>3. Подтвердите добавление.</li>
+                </ol>
+              ) : (
+                <ol className="install-modal__steps">
+                  <li>1. Откройте меню браузера (... или "Поделиться").</li>
+                  <li>2. Выберите "Установить приложение" или "Добавить на главный экран".</li>
+                  <li>3. Подтвердите установку.</li>
+                </ol>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1858,6 +2209,16 @@ function MessageBubble({
   onShowToast,
 }: MessageBubbleProps) {
   const [i18nCarouselIndex, setI18nCarouselIndex] = useState(0);
+  const [i18nImageIndex, setI18nImageIndex] = useState(0);
+
+  useEffect(() => {
+    setI18nCarouselIndex(0);
+    setI18nImageIndex(0);
+  }, [message.id]);
+
+  useEffect(() => {
+    setI18nImageIndex(0);
+  }, [i18nCarouselIndex]);
 
   const langLabels: Record<I18nLang, { flag: string; code: string }> = {
     en: { flag: '🇬🇧', code: 'EN' },
@@ -1926,15 +2287,22 @@ function MessageBubble({
 
     // Screenshot mode: render a carousel
     const currentItem = items[i18nCarouselIndex];
-    const images = items.map((item) => item.imageUrl || '').filter(Boolean);
+    const imageUrls =
+      (currentItem.imageUrls && currentItem.imageUrls.length > 0
+        ? currentItem.imageUrls
+        : currentItem.imageUrl
+          ? [currentItem.imageUrl]
+          : []) || [];
+    const currentImage = imageUrls[i18nImageIndex] || imageUrls[0] || '';
+    const images = imageUrls;
 
     return (
       <div className="message message--i18n">
         <div className="i18n-carousel">
           <div className="i18n-carousel__image-container">
-            {currentItem.imageUrl && (
+            {currentImage && (
               <img
-                src={currentItem.imageUrl}
+                src={currentImage}
                 alt={`${langLabels[currentItem.lang].code} version`}
                 className="i18n-carousel__image"
                 onClick={() => onOpenGallery(images)}
@@ -1953,6 +2321,32 @@ function MessageBubble({
               <span className="i18n-carousel__code">{langLabels[currentItem.lang].code}</span>
             </div>
           </div>
+
+          {imageUrls.length > 1 && (
+            <div className="i18n-carousel__image-nav">
+              <button
+                type="button"
+                className="i18n-carousel__nav-btn"
+                onClick={() => setI18nImageIndex((idx) => Math.max(0, idx - 1))}
+                disabled={i18nImageIndex === 0}
+                aria-label="Previous screenshot"
+              >
+                ‹
+              </button>
+              <div className="i18n-carousel__counter">
+                {i18nImageIndex + 1} / {imageUrls.length}
+              </div>
+              <button
+                type="button"
+                className="i18n-carousel__nav-btn"
+                onClick={() => setI18nImageIndex((idx) => Math.min(imageUrls.length - 1, idx + 1))}
+                disabled={i18nImageIndex === imageUrls.length - 1}
+                aria-label="Next screenshot"
+              >
+                ›
+              </button>
+            </div>
+          )}
           <div className="i18n-carousel__nav">
             {items.map((item, idx) => (
               <button
@@ -2080,6 +2474,55 @@ function MessageBubble({
             <p className="message__caption">{caption}</p>
           </div>
         )}
+
+        {reaction && <div className="message__reaction">{reaction}</div>}
+
+        <div className="actions">
+          <button className="actions__btn" onClick={onSay}>
+            {Icons.message}
+            <span>Say</span>
+          </button>
+          <button
+            className={`actions__btn ${isBookmarked ? 'actions__btn--active' : ''}`}
+            onClick={onBookmark}
+          >
+            {isBookmarked ? Icons.bookmarkFilled : Icons.bookmark}
+            <span>{isBookmarked ? 'Saved' : 'Read later'}</span>
+          </button>
+          <button className="actions__btn" onClick={onReact}>
+            {Icons.sparkle}
+            <span>React</span>
+          </button>
+        </div>
+
+        {emojiPanelOpen && (
+          <div className="emoji-panel">
+            {emojis.map((emoji) => (
+              <button key={emoji} className="emoji-panel__btn" onClick={() => onSelectEmoji(emoji)}>
+                {emoji}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (message.type === 'video') {
+    return (
+      <div className="message">
+        <div className="message__bubble message__bubble--photo" style={{ width: 'auto', maxWidth: '100%' }}>
+          <video
+            src={message.videoUrl}
+            controls
+            playsInline
+            preload="metadata"
+            style={{ width: '100%', maxWidth: '280px', borderRadius: '16px', objectFit: 'contain' }}
+          />
+          <div className="message__meta message__meta--photo">
+            {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
+          </div>
+        </div>
 
         {reaction && <div className="message__reaction">{reaction}</div>}
 

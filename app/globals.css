@@ -644,7 +644,7 @@ button:focus {
 }
 
 .photo-viewer__image {
-  max-width: 100%;
+  max-width: 100vw;
   max-height: calc(100vh - 100px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
   width: auto;
   height: auto;
@@ -682,6 +682,62 @@ button:focus {
   justify-content: center;
   box-shadow: var(--shadow-strong);
   transition: background 0.2s, transform 0.15s;
+}
+
+.photo-viewer__top-actions {
+  position: fixed;
+  top: 18px;
+  left: 18px;
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.photo-viewer__fs-btn {
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.2s, transform 0.15s;
+}
+
+.photo-viewer__fs-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.photo-viewer__fs-btn:active {
+  transform: scale(0.97);
+}
+
+.rotate-hint {
+  position: fixed;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: var(--radius-md);
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: var(--shadow-medium);
+}
+
+.rotate-hint__close {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .photo-viewer__close:hover {
@@ -1055,6 +1111,26 @@ button:focus {
   box-shadow: var(--shadow-strong);
 }
 
+.bottom-sheet__close-btn {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.bottom-sheet__close-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
 .bottom-sheet__handle {
   width: 40px;
   height: 4px;
@@ -1083,6 +1159,11 @@ button:focus {
 
 .bottom-sheet__item:hover {
   background: rgba(255, 255, 255, 0.06);
+}
+
+.bottom-sheet__item--disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .bottom-sheet__icon {
@@ -1143,6 +1224,118 @@ button:focus {
 
 .install-hint__close:hover {
   background: rgba(255, 255, 255, 0.2);
+}
+
+.install-banner {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 24px);
+  max-width: var(--max-width);
+  background: rgba(0, 0, 0, 0.78);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 12px var(--space-md);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.4;
+  box-shadow: var(--shadow-strong);
+  z-index: 180;
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.install-banner__text {
+  flex: 1;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.install-banner__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.install-banner__btn {
+  padding: 8px 12px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: var(--radius-md);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.install-banner__btn:hover {
+  background: var(--accent-hover);
+}
+
+.install-banner__close {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+
+.install-banner__close:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.install-modal {
+  padding: var(--space-lg);
+  max-width: 420px;
+}
+
+.install-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-sm);
+}
+
+.install-modal__title {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.install-modal__close {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+.install-modal__body {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.install-modal__steps {
+  list-style: none;
+  padding-left: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.install-modal__steps li {
+  background: rgba(255, 255, 255, 0.04);
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 /* View Header */
@@ -1801,8 +1994,8 @@ button:focus {
   flex-direction: column;
   align-items: flex-end;
   gap: var(--space-xs);
-  /* Move label/info slightly lower and right */
-  transform: translate(4px, 4px);
+  /* Move label/info lower and slightly right */
+  transform: translate(6px, 20px);
 }
 
 .photo-header__label-row {
@@ -1831,7 +2024,7 @@ button:focus {
   display: flex;
   gap: var(--space-sm);
   /* Move arrows slightly left and lower */
-  transform: translate(-4px, 4px);
+  transform: translate(-6px, 20px);
 }
 
 .photo-header__nav-btn {

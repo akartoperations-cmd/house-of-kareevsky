@@ -16,7 +16,8 @@ export type I18nMode = 'screenshot' | 'text';
 export interface I18nItem {
   lang: I18nLang;
   text?: string;
-  imageUrl?: string;
+  imageUrl?: string; // legacy single-image support
+  imageUrls?: string[]; // ordered screenshots for the language
 }
 
 export interface I18nPack {
@@ -26,12 +27,13 @@ export interface I18nPack {
 
 export interface Message {
   id: string;
-  type: 'photo' | 'text' | 'sticker' | 'poll' | 'i18n';
+  type: 'photo' | 'text' | 'sticker' | 'poll' | 'i18n' | 'video';
   time: string;
   createdAt?: string;
   isTest?: boolean;
   imageUrl?: string;
   images?: string[];
+  videoUrl?: string;
   text?: string;
   subtitle?: string; // For sticker messages
   caption?: string; // For photo posts
