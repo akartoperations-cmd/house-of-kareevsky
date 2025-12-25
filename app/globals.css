@@ -2495,9 +2495,58 @@ button:focus {
 }
 
 /* i18n post rendering - Screenshot carousel mode */
+.i18n-header {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+.i18n-flags {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.i18n-flag {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 2px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.i18n-flag--active {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.i18n-missing {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: rgba(43, 65, 106, 0.9);
+  margin-bottom: 8px;
+}
+
+.i18n-missing--overlay {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  right: 12px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.65);
+  border-radius: var(--radius-md);
+  color: #fff;
+  font-size: 12px;
+}
+
 .i18n-carousel {
   position: relative;
-  max-width: 280px;
+  max-width: 320px;
 }
 
 .i18n-carousel__image-container {
@@ -2541,33 +2590,40 @@ button:focus {
   letter-spacing: 0.5px;
 }
 
-.i18n-carousel__nav {
-  display: flex;
-  justify-content: center;
-  gap: var(--space-sm);
-  margin-top: var(--space-sm);
-}
-
-.i18n-carousel__dot {
+.i18n-carousel__nav-btn {
+  position: absolute;
+  bottom: 12px;
   width: 36px;
   height: 36px;
-  border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.08);
-  border: 2px solid transparent;
-  font-size: 18px;
-  display: flex;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  font-size: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-.i18n-carousel__dot:hover {
-  background: rgba(255, 255, 255, 0.12);
+.i18n-carousel__nav-btn--left {
+  left: 12px;
 }
 
-.i18n-carousel__dot--active {
-  background: rgba(255, 255, 255, 0.15);
-  border-color: rgba(255, 255, 255, 0.4);
+.i18n-carousel__nav-btn--right {
+  left: 56px;
+}
+
+.i18n-carousel__counter {
+  position: absolute;
+  bottom: 14px;
+  right: 14px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.9);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .i18n-carousel__meta {
