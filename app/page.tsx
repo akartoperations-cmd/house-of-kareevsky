@@ -274,6 +274,7 @@ export default function HomePage() {
   const [showInstallInstructions, setShowInstallInstructions] = useState(false);
   const pendingScrollToBottom = useRef(false);
   const didInitialScroll = useRef(false);
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const scrollElementRef = useRef<HTMLElement | null>(null);
   const isNearBottomRef = useRef(true);
   const photoViewerContainerRef = useRef<HTMLDivElement | null>(null);
@@ -432,7 +433,10 @@ export default function HomePage() {
       const target = scrollElementRef.current || document.scrollingElement || document.documentElement;
       if (!target) return;
       const distance = target.scrollHeight - (target.scrollTop + target.clientHeight);
-      isNearBottomRef.current = distance < 120;
+      const nearBottom = distance < 120;
+      isNearBottomRef.current = nearBottom;
+      // Auto-scroll only when the user is near the bottom; scrolling up disables it until they return
+      setAutoScrollEnabled(nearBottom);
     };
     handleScroll();
     window.addEventListener('scroll', handleScroll, { passive: true });
@@ -444,7 +448,15 @@ export default function HomePage() {
     if (!target) return;
     target.scrollTo({ top: target.scrollHeight, behavior: 'auto' });
     isNearBottomRef.current = true;
+    setAutoScrollEnabled(true);
   }, []);
+
+  useEffect(() => {
+    if (activeView === 'home' && isNearBottomRef.current) {
+      // When entering the feed, request scroll to the latest post unless the user had scrolled up
+      pendingScrollToBottom.current = true;
+    }
+  }, [activeView]);
 
   useEffect(() => {
     if (activeView !== 'home') return;
@@ -455,11 +467,11 @@ export default function HomePage() {
       return;
     }
 
-    if (pendingScrollToBottom.current && isNearBottomRef.current) {
+    if (pendingScrollToBottom.current && autoScrollEnabled) {
       pendingScrollToBottom.current = false;
       requestAnimationFrame(scrollToBottomImmediate);
     }
-  }, [activeView, feedItems.length, scrollToBottomImmediate]);
+  }, [activeView, feedItems.length, autoScrollEnabled, scrollToBottomImmediate]);
 
   const goToPrevPhoto = useCallback(() => {
     if (currentPhotoIndex > 0) {
@@ -825,7 +837,18 @@ export default function HomePage() {
       setMediaIsVideo(false);
     } else if (createTab === 'audio') {
       if (!audioFile) return;
-      showToast('Audio post saved (mock).');
+      const audioUrl = URL.createObjectURL(audioFile);
+      const newMsg: Message = {
+        id: `a-${Date.now()}`,
+        type: 'audio',
+        time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+        createdAt: new Date().toISOString(),
+        audioUrl,
+        text: audioFile.name || 'Audio message',
+      };
+      setFeedMessages((prev) => [...prev, newMsg]);
+      pendingScrollToBottom.current = true;
+      showToast('Audio post published (mock).');
       resetAudioSelection();
     } else if (createTab === 'poll') {
       const trimmedOptions = pollOptions.map((o) => o.trim()).filter(Boolean);
@@ -845,18 +868,17 @@ export default function HomePage() {
       setPollOptions(['', '']);
     } else if (createTab === 'languages') {
       const langs: I18nLang[] = ['en', 'es', 'fr', 'it'];
-      
+
       if (i18nMode === 'text') {
-        // Validate all texts are filled
-        const allFilled = langs.every((l) => i18nTexts[l].trim().length > 0);
-        if (!allFilled) {
-          showToast('Please fill in all 4 languages.');
+        const trimmed = langs.map((l) => [l, i18nTexts[l].trim()] as const);
+        const english = trimmed.find(([l]) => l === 'en');
+        if (!english || !english[1]) {
+          showToast('Please provide English text.');
           return;
         }
-        const items: I18nItem[] = langs.map((lang) => ({
-          lang,
-          text: i18nTexts[lang].trim(),
-        }));
+        const items: I18nItem[] = trimmed
+          .filter(([, t]) => t.length > 0)
+          .map(([lang, text]) => ({ lang, text }));
         const pack: I18nPack = { mode: 'text', items };
         const newMsg: Message = {
           id: `i18n-${Date.now()}`,
@@ -870,16 +892,19 @@ export default function HomePage() {
         showToast('Multi-language post published!');
         setI18nTexts({ en: '', es: '', fr: '', it: '' });
       } else {
-        // Screenshot mode - validate all images are uploaded
-        const allUploaded = langs.every((l) => (i18nPreviews[l] || []).length > 0);
-        if (!allUploaded) {
-          showToast('Please upload images for all 4 languages.');
+        // Screenshot mode - require at least English, others optional
+        const withImages = langs
+          .map((lang) => ({ lang, urls: i18nPreviews[lang] || [] }))
+          .filter(({ urls }) => urls.length > 0);
+        const hasEnglish = withImages.some(({ lang }) => lang === 'en');
+        if (!hasEnglish) {
+          showToast('Please upload at least English images.');
           return;
         }
-        const items: I18nItem[] = langs.map((lang) => ({
+        const items: I18nItem[] = withImages.map(({ lang, urls }) => ({
           lang,
-          imageUrl: i18nPreviews[lang][0], // legacy single-image consumers
-          imageUrls: [...i18nPreviews[lang]],
+          imageUrl: urls[0], // legacy single-image consumers
+          imageUrls: [...urls],
         }));
         const pack: I18nPack = { mode: 'screenshot', items };
         const newMsg: Message = {
@@ -2212,17 +2237,17 @@ function MessageBubble({
   onOpenGallery,
   onShowToast,
 }: MessageBubbleProps) {
-  const [i18nCarouselIndex, setI18nCarouselIndex] = useState(0);
+  const [i18nSelectedLang, setI18nSelectedLang] = useState<I18nLang>('en');
   const [i18nImageIndex, setI18nImageIndex] = useState(0);
 
   useEffect(() => {
-    setI18nCarouselIndex(0);
+    setI18nSelectedLang('en');
     setI18nImageIndex(0);
   }, [message.id]);
 
   useEffect(() => {
     setI18nImageIndex(0);
-  }, [i18nCarouselIndex]);
+  }, [i18nSelectedLang]);
 
   const langLabels: Record<I18nLang, { flag: string; code: string }> = {
     en: { flag: '🇬🇧', code: 'EN' },
@@ -2231,29 +2256,43 @@ function MessageBubble({
     it: { flag: '🇮🇹', code: 'IT' },
   };
 
+  const renderI18nFlags = (available: I18nLang[], onSelect: (lang: I18nLang) => void) => (
+    <div className="i18n-flags">
+      {available.map((lang) => (
+        <button
+          key={lang}
+          type="button"
+          className={`i18n-flag ${i18nSelectedLang === lang ? 'i18n-flag--active' : ''}`}
+          onClick={() => onSelect(lang)}
+          aria-label={`Switch to ${langLabels[lang].code}`}
+        >
+          {langLabels[lang].flag}
+        </button>
+      ))}
+    </div>
+  );
+
   // Render i18n (multi-language) posts
   if (message.type === 'i18n' && message.i18nPack) {
     const { mode, items } = message.i18nPack;
+    const availableLangs = items.map((it) => it.lang);
+    const currentItem =
+      items.find((it) => it.lang === i18nSelectedLang) || items.find((it) => it.lang === 'en') || items[0];
+    const missingLanguage = !currentItem || currentItem.lang !== i18nSelectedLang;
 
     if (mode === 'text') {
-      // Text bubble mode: render 4 stacked bubbles
+      const content = currentItem?.text;
       return (
         <div className="message message--i18n">
-          <div className="i18n-bubbles">
-            {items.map((item) => (
-              <div key={item.lang} className="i18n-bubble">
-                <div className="i18n-bubble__lang">
-                  <span className="i18n-bubble__flag">{langLabels[item.lang].flag}</span>
-                  <span className="i18n-bubble__code">{langLabels[item.lang].code}</span>
-                </div>
-                <div className="message__bubble message__bubble--text i18n-bubble__content">
-                  <p className="message__handwriting">{item.text}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="i18n-meta">
-            {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
+          <div className="i18n-header">{renderI18nFlags(availableLangs, setI18nSelectedLang)}</div>
+          <div className="message__bubble message__bubble--text">
+            {missingLanguage && (
+              <div className="i18n-missing">This language is not available yet. Please read another one.</div>
+            )}
+            <p className="message__handwriting">{content || ''}</p>
+            <div className="message__meta">
+              {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
+            </div>
           </div>
 
           {reaction && <div className="message__reaction">{reaction}</div>}
@@ -2289,25 +2328,23 @@ function MessageBubble({
       );
     }
 
-    // Screenshot mode: render a carousel
-    const currentItem = items[i18nCarouselIndex];
-    const imageUrls =
-      (currentItem.imageUrls && currentItem.imageUrls.length > 0
+    const images =
+      (currentItem?.imageUrls && currentItem.imageUrls.length > 0
         ? currentItem.imageUrls
-        : currentItem.imageUrl
+        : currentItem?.imageUrl
           ? [currentItem.imageUrl]
           : []) || [];
-    const currentImage = imageUrls[i18nImageIndex] || imageUrls[0] || '';
-    const images = imageUrls;
+    const currentImage = images[i18nImageIndex] || images[0] || '';
 
     return (
       <div className="message message--i18n">
+        <div className="i18n-header">{renderI18nFlags(availableLangs, setI18nSelectedLang)}</div>
         <div className="i18n-carousel">
           <div className="i18n-carousel__image-container">
             {currentImage && (
               <img
                 src={currentImage}
-                alt={`${langLabels[currentItem.lang].code} version`}
+                alt={`${langLabels[currentItem?.lang || 'en'].code} version`}
                 className="i18n-carousel__image"
                 onClick={() => onOpenGallery(images)}
                 role="button"
@@ -2321,48 +2358,37 @@ function MessageBubble({
               />
             )}
             <div className="i18n-carousel__lang-badge">
-              <span className="i18n-carousel__flag">{langLabels[currentItem.lang].flag}</span>
-              <span className="i18n-carousel__code">{langLabels[currentItem.lang].code}</span>
+              <span className="i18n-carousel__flag">{langLabels[currentItem?.lang || 'en'].flag}</span>
+              <span className="i18n-carousel__code">{langLabels[currentItem?.lang || 'en'].code}</span>
             </div>
-          </div>
-
-          {imageUrls.length > 1 && (
-            <div className="i18n-carousel__image-nav">
-              <button
-                type="button"
-                className="i18n-carousel__nav-btn"
-                onClick={() => setI18nImageIndex((idx) => Math.max(0, idx - 1))}
-                disabled={i18nImageIndex === 0}
-                aria-label="Previous screenshot"
-              >
-                ‹
-              </button>
-              <div className="i18n-carousel__counter">
-                {i18nImageIndex + 1} / {imageUrls.length}
+            {images.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  className="i18n-carousel__nav-btn i18n-carousel__nav-btn--left"
+                  onClick={() => setI18nImageIndex((idx) => Math.max(0, idx - 1))}
+                  disabled={i18nImageIndex === 0}
+                  aria-label="Previous page"
+                >
+                  ‹
+                </button>
+                <button
+                  type="button"
+                  className="i18n-carousel__nav-btn i18n-carousel__nav-btn--right"
+                  onClick={() => setI18nImageIndex((idx) => Math.min(images.length - 1, idx + 1))}
+                  disabled={i18nImageIndex === images.length - 1}
+                  aria-label="Next page"
+                >
+                  ›
+                </button>
+                <div className="i18n-carousel__counter">{`${i18nImageIndex + 1}|${images.length}`}</div>
+              </>
+            )}
+            {missingLanguage && (
+              <div className="i18n-missing i18n-missing--overlay">
+                This language is not available yet. Please read another one.
               </div>
-              <button
-                type="button"
-                className="i18n-carousel__nav-btn"
-                onClick={() => setI18nImageIndex((idx) => Math.min(imageUrls.length - 1, idx + 1))}
-                disabled={i18nImageIndex === imageUrls.length - 1}
-                aria-label="Next screenshot"
-              >
-                ›
-              </button>
-            </div>
-          )}
-          <div className="i18n-carousel__nav">
-            {items.map((item, idx) => (
-              <button
-                key={item.lang}
-                type="button"
-                className={`i18n-carousel__dot ${idx === i18nCarouselIndex ? 'i18n-carousel__dot--active' : ''}`}
-                onClick={() => setI18nCarouselIndex(idx)}
-                aria-label={`Show ${langLabels[item.lang].code} version`}
-              >
-                {langLabels[item.lang].flag}
-              </button>
-            ))}
+            )}
           </div>
           <div className="i18n-carousel__meta">
             {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
@@ -2476,6 +2502,60 @@ function MessageBubble({
         {caption && (
           <div className="message__caption-bubble">
             <p className="message__caption">{caption}</p>
+          </div>
+        )}
+
+        {reaction && <div className="message__reaction">{reaction}</div>}
+
+        <div className="actions">
+          <button className="actions__btn" onClick={onSay}>
+            {Icons.message}
+            <span>Say</span>
+          </button>
+          <button
+            className={`actions__btn ${isBookmarked ? 'actions__btn--active' : ''}`}
+            onClick={onBookmark}
+          >
+            {isBookmarked ? Icons.bookmarkFilled : Icons.bookmark}
+            <span>{isBookmarked ? 'Saved' : 'Read later'}</span>
+          </button>
+          <button className="actions__btn" onClick={onReact}>
+            {Icons.sparkle}
+            <span>React</span>
+          </button>
+        </div>
+
+        {emojiPanelOpen && (
+          <div className="emoji-panel">
+            {emojis.map((emoji) => (
+              <button key={emoji} className="emoji-panel__btn" onClick={() => onSelectEmoji(emoji)}>
+                {emoji}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (message.type === 'audio') {
+    return (
+      <div className="message">
+        <div className="message__bubble message__bubble--photo" style={{ width: 'auto', maxWidth: '100%' }}>
+          <audio
+            src={message.audioUrl}
+            controls
+            preload="metadata"
+            style={{ width: '100%', maxWidth: '280px' }}
+          />
+          <div className="message__meta message__meta--photo">
+            {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
+          </div>
+        </div>
+
+        {message.text && (
+          <div className="message__caption-bubble" style={{ marginTop: '10px' }}>
+            <p className="message__handwriting">{message.text}</p>
           </div>
         )}
 

@@ -27,13 +27,14 @@ export interface I18nPack {
 
 export interface Message {
   id: string;
-  type: 'photo' | 'text' | 'sticker' | 'poll' | 'i18n' | 'video';
+  type: 'photo' | 'text' | 'sticker' | 'poll' | 'i18n' | 'video' | 'audio';
   time: string;
   createdAt?: string;
   isTest?: boolean;
   imageUrl?: string;
   images?: string[];
   videoUrl?: string;
+  audioUrl?: string;
   text?: string;
   subtitle?: string; // For sticker messages
   caption?: string; // For photo posts
