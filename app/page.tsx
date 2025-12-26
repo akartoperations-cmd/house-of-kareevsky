@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   audioItems,
   emojis,
@@ -122,6 +123,14 @@ const Icons = {
       <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
     </svg>
   ),
+  documents: (
+    <svg className="icon" viewBox="0 0 24 24">
+      <rect x="5" y="3" width="14" height="18" rx="2" ry="2" />
+      <path d="M9 7h6" />
+      <path d="M9 11h6" />
+      <path d="M9 15h4" />
+    </svg>
+  ),
   sparkle: (
     <svg className="icon" viewBox="0 0 24 24">
       <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8L12 2z" />
@@ -231,11 +240,14 @@ const BRANDING = {
 };
 
 export default function HomePage() {
+  const router = useRouter();
   const [isAdmin, setIsAdmin] = useState(false);
   const [isSignedIn, setIsSignedIn] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
 
   const [activeView, setActiveView] = useState<View>('home');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [documentsOpen, setDocumentsOpen] = useState(false);
 
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(() => photos.length - 1);
   const [photoViewer, setPhotoViewer] = useState<PhotoViewerState>(null);
@@ -351,6 +363,47 @@ export default function HomePage() {
     setToastMessage(text);
     setTimeout(() => setToastMessage(null), timeoutMs);
   }, []);
+
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      setAuthChecked(true);
+      setIsSignedIn(false);
+      router.replace('/welcome');
+      return;
+    }
+
+    let mounted = true;
+
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        if (!mounted) return;
+        const hasSession = Boolean(data.session);
+        setIsSignedIn(hasSession);
+        setAuthChecked(true);
+        if (!hasSession) router.replace('/welcome');
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setIsSignedIn(false);
+        setAuthChecked(true);
+        router.replace('/welcome');
+      });
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!mounted) return;
+      const hasSession = Boolean(nextSession);
+      setIsSignedIn(hasSession);
+      setAuthChecked(true);
+      if (!hasSession) router.replace('/welcome');
+    });
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, [router]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1852,6 +1905,20 @@ export default function HomePage() {
     }
   };
 
+  if (!authChecked) {
+    return (
+      <div className="welcome-page">
+        <div className="welcome-card">
+          <div className="welcome-loading">Checking access…</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isSignedIn) {
+    return null;
+  }
+
   return (
     <>
       <AuthBar
@@ -1918,6 +1985,16 @@ export default function HomePage() {
                 <span className="bottom-sheet__icon">{Icons.coffee}</span>
                 Treat
               </button>
+              <button
+                className="bottom-sheet__item"
+                onClick={() => {
+                  setDocumentsOpen(true);
+                  setMenuOpen(false);
+                }}
+              >
+                <span className="bottom-sheet__icon">{Icons.documents}</span>
+                Documents
+              </button>
               {isSignedIn && (
                 <button className="bottom-sheet__item" onClick={handleSignOut}>
                   <span className="bottom-sheet__icon">{Icons.close}</span>
@@ -1940,6 +2017,27 @@ export default function HomePage() {
             </div>
           </div>
         </>
+      )}
+
+      {documentsOpen && (
+        <div className="modal-overlay" onClick={() => setDocumentsOpen(false)}>
+          <div className="modal documents-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="comments-modal__header">
+              <h2 className="comments-modal__title">Documents</h2>
+              <button onClick={() => setDocumentsOpen(false)} aria-label="Close">
+                {Icons.close}
+              </button>
+            </div>
+            <div className="documents-modal__content">
+              <a className="documents-link" href="/terms" onClick={() => setDocumentsOpen(false)}>
+                Terms
+              </a>
+              <a className="documents-link" href="/privacy" onClick={() => setDocumentsOpen(false)}>
+                Privacy
+              </a>
+            </div>
+          </div>
+        </div>
       )}
 
       {addPhotoDayOpen && (
