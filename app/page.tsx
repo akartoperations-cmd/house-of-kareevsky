@@ -18,6 +18,7 @@ import {
 } from './lib/intimateMockData';
 import { AuthBar } from './components/AuthBar';
 import { getSupabaseBrowserClient } from './lib/supabaseClient';
+import { uploadMedia, type MediaUploadResult } from './lib/mediaProvider';
 
 type AdminMessage = {
   id: string;
@@ -190,6 +191,30 @@ const Icons = {
       <line x1="5" y1="12" x2="19" y2="12" />
     </svg>
   ),
+  fullscreen: (
+    <svg className="icon" viewBox="0 0 24 24">
+      <polyline points="9 3 3 3 3 9" />
+      <polyline points="15 3 21 3 21 9" />
+      <polyline points="9 21 3 21 3 15" />
+      <polyline points="15 21 21 21 21 15" />
+      <line x1="3" y1="3" x2="9" y2="9" />
+      <line x1="21" y1="3" x2="15" y2="9" />
+      <line x1="3" y1="21" x2="9" y2="15" />
+      <line x1="21" y1="21" x2="15" y2="15" />
+    </svg>
+  ),
+  compress: (
+    <svg className="icon" viewBox="0 0 24 24">
+      <polyline points="9 7 9 3 3 3" />
+      <line x1="3" y1="3" x2="7" y2="7" />
+      <polyline points="15 7 15 3 21 3" />
+      <line x1="21" y1="3" x2="17" y2="7" />
+      <polyline points="9 17 9 21 3 21" />
+      <line x1="3" y1="21" x2="7" y2="17" />
+      <polyline points="15 17 15 21 21 21" />
+      <line x1="21" y1="21" x2="17" y2="17" />
+    </svg>
+  ),
 };
 
 const photoCaptions: Record<string, string> = {
@@ -237,6 +262,9 @@ export default function HomePage() {
   const [mediaIsVideo, setMediaIsVideo] = useState(false);
   const [mediaCaption, setMediaCaption] = useState('');
   const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [audioUpload, setAudioUpload] = useState<MediaUploadResult | null>(null);
+  const [audioUploading, setAudioUploading] = useState(false);
+  const [audioUploadError, setAudioUploadError] = useState<string | null>(null);
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
   // Multi-language post state
@@ -254,6 +282,7 @@ export default function HomePage() {
     fr: [],
     it: [],
   });
+  const audioUploadRequestId = useRef(0);
   const i18nFileInputRefs = useRef<Record<I18nLang, HTMLInputElement | null>>({ en: null, es: null, fr: null, it: null });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [photoAboutOpen, setPhotoAboutOpen] = useState(false);
@@ -734,7 +763,51 @@ export default function HomePage() {
   };
 
   const resetAudioSelection = () => {
+    audioUploadRequestId.current += 1;
     setAudioFile(null);
+    setAudioUpload(null);
+    setAudioUploading(false);
+    setAudioUploadError(null);
+  };
+
+  const handleAudioSelect = async (file: File | null) => {
+    audioUploadRequestId.current += 1;
+    const requestId = audioUploadRequestId.current;
+
+    setAudioUpload(null);
+    setAudioUploadError(null);
+
+    if (!file) {
+      setAudioFile(null);
+      setAudioUploading(false);
+      return;
+    }
+
+    if (!file.type.startsWith('audio/')) {
+      setAudioFile(null);
+      showToast('Please select an audio file.');
+      return;
+    }
+
+    setAudioFile(file);
+    setAudioUploading(true);
+
+    try {
+      const uploaded = await uploadMedia(file, 'audio');
+      if (audioUploadRequestId.current !== requestId) return;
+      setAudioUpload(uploaded);
+      showToast('Audio uploaded.');
+    } catch (err) {
+      if (audioUploadRequestId.current !== requestId) return;
+      console.error(err);
+      setAudioUpload(null);
+      setAudioUploadError(err instanceof Error ? err.message : 'Failed to upload audio.');
+      showToast('Failed to upload audio. Please try again.');
+    } finally {
+      if (audioUploadRequestId.current === requestId) {
+        setAudioUploading(false);
+      }
+    }
   };
 
   const addMoreMedia = (newFiles: File[]) => {
@@ -836,15 +909,21 @@ export default function HomePage() {
       setMediaCaption('');
       setMediaIsVideo(false);
     } else if (createTab === 'audio') {
-      if (!audioFile) return;
-      const audioUrl = URL.createObjectURL(audioFile);
+      if (audioUploading) {
+        showToast('Please wait for the audio upload to finish.');
+        return;
+      }
+      if (!audioUpload?.url) {
+        showToast('Upload an audio file first.');
+        return;
+      }
       const newMsg: Message = {
         id: `a-${Date.now()}`,
         type: 'audio',
         time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
         createdAt: new Date().toISOString(),
-        audioUrl,
-        text: audioFile.name || 'Audio message',
+        audioUrl: audioUpload.url,
+        text: audioUpload.filename || audioFile?.name || 'Audio message',
       };
       setFeedMessages((prev) => [...prev, newMsg]);
       pendingScrollToBottom.current = true;
@@ -1189,12 +1268,24 @@ export default function HomePage() {
             type="file"
             accept="audio/*"
             onChange={(e) => {
-              const file = e.target.files?.[0] || null;
-              setAudioFile(file);
+                  const file = e.target.files?.[0] || null;
+                  void handleAudioSelect(file);
+                  if (e.target) e.target.value = '';
             }}
             className="create-input"
           />
-          {audioFile && <div className="create-file-name">{audioFile.name}</div>}
+              {audioUploading && <div className="create-note">Uploading audio...</div>}
+              {audioUpload?.url && (
+                <div className="create-file-name">Uploaded: {audioUpload.filename}</div>
+              )}
+              {audioUploadError && !audioUploading && (
+                <div className="create-note" style={{ color: '#ef4444' }}>
+                  {audioUploadError}
+                </div>
+              )}
+              {!audioUploading && !audioUpload && audioFile && !audioUploadError && (
+                <div className="create-note">Audio selected. Preparing upload...</div>
+              )}
           <div className="create-card" style={{ opacity: 0.6 }}>
             <button className="create-tab" disabled>
               Record (soon)
@@ -1258,8 +1349,8 @@ export default function HomePage() {
         const accepted = Array.from(files).filter((f) => f.type.startsWith('image/'));
         if (accepted.length === 0) return;
         const previews = accepted.map((f) => URL.createObjectURL(f));
-        setI18nFiles((prev) => ({ ...prev, [lang]: [...(prev[lang] || []), ...accepted] }));
-        setI18nPreviews((prev) => ({ ...prev, [lang]: [...(prev[lang] || []), ...previews] }));
+        setI18nFiles((prev) => ({ ...prev, [lang]: [...accepted, ...(prev[lang] || [])] }));
+        setI18nPreviews((prev) => ({ ...prev, [lang]: [...previews, ...(prev[lang] || [])] }));
       };
 
       const removeI18nImage = (lang: I18nLang, idx: number) => {
@@ -1974,7 +2065,7 @@ export default function HomePage() {
 
       {photoViewer && (
         <div
-          className="photo-viewer"
+          className={`photo-viewer ${isFullscreen ? 'photo-viewer--fullscreen' : ''}`}
           ref={photoViewerContainerRef}
           onClick={closePhotoViewer}
         >
@@ -1998,21 +2089,19 @@ export default function HomePage() {
               {Icons.close}
             </button>
 
-            <div className="photo-viewer__top-actions">
-              {canFullscreen && (
-                <button
-                  type="button"
-                  className="photo-viewer__fs-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleFullscreen();
-                  }}
-                  aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-                >
-                  {isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-                </button>
-              )}
-            </div>
+            {canFullscreen && (
+              <button
+                type="button"
+                className="photo-viewer__fs-icon"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleFullscreen();
+                }}
+                aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+              >
+                {isFullscreen ? Icons.compress : Icons.fullscreen}
+              </button>
+            )}
 
             {photoViewer.images.length > 1 && (
               <div className="photo-viewer__nav">
@@ -2025,7 +2114,7 @@ export default function HomePage() {
                   ‹
                 </button>
                 <div className="photo-viewer__counter">
-                  {photoViewer.index + 1} / {photoViewer.images.length}
+                  {photoViewer.index + 1}|{photoViewer.images.length}
                 </div>
                 <button
                   className="photo-viewer__nav-btn"
@@ -2053,7 +2142,7 @@ export default function HomePage() {
 
             {showRotateHint && (
               <div className="rotate-hint">
-                <span>Поверни телефон чтобы открыть полностью</span>
+                <span>Rotate your phone to view in full</span>
                 <button
                   type="button"
                   className="rotate-hint__close"
@@ -2334,7 +2423,8 @@ function MessageBubble({
         : currentItem?.imageUrl
           ? [currentItem.imageUrl]
           : []) || [];
-    const currentImage = images[i18nImageIndex] || images[0] || '';
+    const orderedImages = images;
+    const currentImage = orderedImages[i18nImageIndex] || orderedImages[0] || '';
 
     return (
       <div className="message message--i18n">
@@ -2346,47 +2436,51 @@ function MessageBubble({
                 src={currentImage}
                 alt={`${langLabels[currentItem?.lang || 'en'].code} version`}
                 className="i18n-carousel__image"
-                onClick={() => onOpenGallery(images)}
+                onClick={() => onOpenGallery(orderedImages)}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    onOpenGallery(images);
+                    onOpenGallery(orderedImages);
                   }
                 }}
               />
             )}
-            <div className="i18n-carousel__lang-badge">
-              <span className="i18n-carousel__flag">{langLabels[currentItem?.lang || 'en'].flag}</span>
-              <span className="i18n-carousel__code">{langLabels[currentItem?.lang || 'en'].code}</span>
-            </div>
-            {images.length > 1 && (
-              <>
-                <button
-                  type="button"
-                  className="i18n-carousel__nav-btn i18n-carousel__nav-btn--left"
-                  onClick={() => setI18nImageIndex((idx) => Math.max(0, idx - 1))}
-                  disabled={i18nImageIndex === 0}
-                  aria-label="Previous page"
-                >
-                  ‹
-                </button>
-                <button
-                  type="button"
-                  className="i18n-carousel__nav-btn i18n-carousel__nav-btn--right"
-                  onClick={() => setI18nImageIndex((idx) => Math.min(images.length - 1, idx + 1))}
-                  disabled={i18nImageIndex === images.length - 1}
-                  aria-label="Next page"
-                >
-                  ›
-                </button>
-                <div className="i18n-carousel__counter">{`${i18nImageIndex + 1}|${images.length}`}</div>
-              </>
-            )}
             {missingLanguage && (
               <div className="i18n-missing i18n-missing--overlay">
                 This language is not available yet. Please read another one.
+              </div>
+            )}
+          </div>
+          <div className="i18n-carousel__footer">
+            <div className="i18n-carousel__lang-chip">
+              <span className="i18n-carousel__flag">{langLabels[currentItem?.lang || 'en'].flag}</span>
+              <span className="i18n-carousel__code">{langLabels[currentItem?.lang || 'en'].code}</span>
+            </div>
+            {orderedImages.length > 1 && (
+              <div className="i18n-carousel__controls">
+                <div className="i18n-carousel__nav">
+                  <button
+                    type="button"
+                    className="i18n-carousel__nav-btn"
+                    onClick={() => setI18nImageIndex((idx) => Math.max(0, idx - 1))}
+                    disabled={i18nImageIndex === 0}
+                    aria-label="Previous page"
+                  >
+                    ‹
+                  </button>
+                  <button
+                    type="button"
+                    className="i18n-carousel__nav-btn"
+                    onClick={() => setI18nImageIndex((idx) => Math.min(orderedImages.length - 1, idx + 1))}
+                    disabled={i18nImageIndex === orderedImages.length - 1}
+                    aria-label="Next page"
+                  >
+                    ›
+                  </button>
+                </div>
+                <div className="i18n-carousel__counter">{`${i18nImageIndex + 1}|${orderedImages.length}`}</div>
               </div>
             )}
           </div>
@@ -2539,15 +2633,23 @@ function MessageBubble({
   }
 
   if (message.type === 'audio') {
+    const hasAudio = Boolean(message.audioUrl && !message.audioUrl.startsWith('blob:'));
+
     return (
       <div className="message">
         <div className="message__bubble message__bubble--photo" style={{ width: 'auto', maxWidth: '100%' }}>
-          <audio
-            src={message.audioUrl}
-            controls
-            preload="metadata"
-            style={{ width: '100%', maxWidth: '280px' }}
-          />
+          {hasAudio ? (
+            <audio
+              src={message.audioUrl}
+              controls
+              preload="metadata"
+              style={{ width: '100%', maxWidth: '280px' }}
+            />
+          ) : (
+            <div className="message__caption" style={{ padding: '8px 0' }}>
+              Audio file is not available
+            </div>
+          )}
           <div className="message__meta message__meta--photo">
             {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
           </div>

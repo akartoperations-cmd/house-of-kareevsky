@@ -628,9 +628,15 @@ button:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-md);
+  padding: var(--space-sm);
   padding-top: calc(var(--space-md) + env(safe-area-inset-top, 0px));
   padding-bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0px));
+}
+
+.photo-viewer--fullscreen {
+  padding: 0;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .photo-viewer__content {
@@ -640,17 +646,24 @@ button:focus {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: var(--space-sm);
+  height: 100%;
 }
 
 .photo-viewer__image {
   max-width: 100vw;
-  max-height: calc(100vh - 100px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  max-height: calc(100vh - 72px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
   width: auto;
   height: auto;
   object-fit: contain;
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-medium);
+}
+
+.photo-viewer--fullscreen .photo-viewer__image {
+  max-height: calc(100vh - 28px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  max-width: 100vw;
 }
 
 @media (max-width: 520px) {
@@ -662,7 +675,7 @@ button:focus {
   }
   .photo-viewer__image {
     max-width: 100vw;
-    max-height: calc(100vh - 80px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    max-height: calc(100vh - 64px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
     border-radius: 0;
   }
 }
@@ -685,30 +698,32 @@ button:focus {
 }
 
 .photo-viewer__top-actions {
-  position: fixed;
-  top: 18px;
-  left: 18px;
-  display: flex;
-  gap: var(--space-sm);
+  display: none;
 }
 
-.photo-viewer__fs-btn {
-  padding: 8px 12px;
-  border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.14);
+.photo-viewer__fs-icon {
+  position: fixed;
+  right: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
   border: 1px solid rgba(255, 255, 255, 0.2);
   color: #fff;
-  font-size: 12px;
-  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-strong);
   transition: background 0.2s, transform 0.15s;
 }
 
-.photo-viewer__fs-btn:hover {
-  background: rgba(255, 255, 255, 0.22);
+.photo-viewer__fs-icon:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
-.photo-viewer__fs-btn:active {
-  transform: scale(0.97);
+.photo-viewer__fs-icon:active {
+  transform: scale(0.96);
 }
 
 .rotate-hint {
@@ -1995,7 +2010,7 @@ button:focus {
   align-items: flex-end;
   gap: var(--space-xs);
   /* Move label/info lower and slightly right */
-  transform: translate(6px, 20px);
+  transform: translate(6px, 36px);
 }
 
 .photo-header__label-row {
@@ -2024,7 +2039,7 @@ button:focus {
   display: flex;
   gap: var(--space-sm);
   /* Move arrows slightly left and lower */
-  transform: translate(-6px, 20px);
+  transform: translate(-6px, 36px);
 }
 
 .photo-header__nav-btn {
@@ -2546,7 +2561,8 @@ button:focus {
 
 .i18n-carousel {
   position: relative;
-  max-width: 320px;
+  max-width: 200px;
+  margin: 0 auto;
 }
 
 .i18n-carousel__image-container {
@@ -2558,16 +2574,23 @@ button:focus {
 
 .i18n-carousel__image {
   width: 100%;
+  max-height: 320px;
   height: auto;
   display: block;
   border-radius: var(--radius-lg);
+  object-fit: contain;
 }
 
-.i18n-carousel__lang-badge {
-  position: absolute;
-  top: 10px;
-  left: 10px;
+.i18n-carousel__footer {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+}
+
+.i18n-carousel__lang-chip {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
@@ -2590,9 +2613,21 @@ button:focus {
   letter-spacing: 0.5px;
 }
 
+.i18n-carousel__controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-left: auto;
+}
+
+.i18n-carousel__nav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
 .i18n-carousel__nav-btn {
-  position: absolute;
-  bottom: 12px;
   width: 36px;
   height: 36px;
   border-radius: 50%;
@@ -2605,18 +2640,7 @@ button:focus {
   border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-.i18n-carousel__nav-btn--left {
-  left: 12px;
-}
-
-.i18n-carousel__nav-btn--right {
-  left: 56px;
-}
-
 .i18n-carousel__counter {
-  position: absolute;
-  bottom: 14px;
-  right: 14px;
   padding: 6px 10px;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.55);
