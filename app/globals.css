@@ -357,6 +357,19 @@ button:focus {
   color: var(--text-ink);
 }
 
+.deterrent-content {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.deterrent-media-guard {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  z-index: 2;
+  cursor: pointer;
+}
+
 /* Date dividers */
 .date-pill {
   display: inline-flex;

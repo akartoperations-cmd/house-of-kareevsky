@@ -1688,6 +1688,7 @@ export default function HomePage() {
                 <MessageBubble
                   key={message.id}
                   message={message}
+                  isAdmin={isAdmin}
                   isBookmarked={bookmarks[message.id] || false}
                   reaction={reactions[message.id]}
                   emojiPanelOpen={emojiPanelOpen === message.id}
@@ -1815,6 +1816,7 @@ export default function HomePage() {
                   <div key={message.id} className="feed-item">
                     <MessageBubble
                       message={message}
+                      isAdmin={isAdmin}
                       isBookmarked={bookmarks[message.id] || false}
                       reaction={reactions[message.id]}
                       emojiPanelOpen={emojiPanelOpen === message.id}
@@ -2304,6 +2306,7 @@ export default function HomePage() {
 interface MessageBubbleProps {
   message: Message;
   isBookmarked: boolean;
+  isAdmin: boolean;
   reaction?: string;
   emojiPanelOpen: boolean;
   onSay: () => void;
@@ -2317,6 +2320,7 @@ interface MessageBubbleProps {
 function MessageBubble({
   message,
   isBookmarked,
+  isAdmin,
   reaction,
   emojiPanelOpen,
   onSay,
@@ -2328,6 +2332,11 @@ function MessageBubble({
 }: MessageBubbleProps) {
   const [i18nSelectedLang, setI18nSelectedLang] = useState<I18nLang>('en');
   const [i18nImageIndex, setI18nImageIndex] = useState(0);
+
+  // Deterrence only: not DRM and cannot block screen recording
+  const isReader = !isAdmin;
+  const deterrentClass = isReader ? 'deterrent-content' : '';
+  const handleContentContextMenu = isReader ? (event: React.MouseEvent) => event.preventDefault() : undefined;
 
   useEffect(() => {
     setI18nSelectedLang('en');
@@ -2374,7 +2383,10 @@ function MessageBubble({
       return (
         <div className="message message--i18n">
           <div className="i18n-header">{renderI18nFlags(availableLangs, setI18nSelectedLang)}</div>
-          <div className="message__bubble message__bubble--text">
+          <div
+            className={`message__bubble message__bubble--text ${deterrentClass}`}
+            onContextMenu={handleContentContextMenu}
+          >
             {missingLanguage && (
               <div className="i18n-missing">This language is not available yet. Please read another one.</div>
             )}
@@ -2430,7 +2442,17 @@ function MessageBubble({
       <div className="message message--i18n">
         <div className="i18n-header">{renderI18nFlags(availableLangs, setI18nSelectedLang)}</div>
         <div className="i18n-carousel">
-          <div className="i18n-carousel__image-container">
+          <div
+            className={`i18n-carousel__image-container ${deterrentClass}`}
+            onContextMenu={handleContentContextMenu}
+          >
+            {isReader && (
+              <div
+                className="deterrent-media-guard"
+                aria-hidden="true"
+                onClick={() => onOpenGallery(orderedImages)}
+              />
+            )}
             {currentImage && (
               <img
                 src={currentImage}
@@ -2527,7 +2549,10 @@ function MessageBubble({
     const options = (message.pollOptions || []).slice(0, 4);
     return (
       <div className="message">
-        <div className="message__bubble message__bubble--poll">
+        <div
+          className={`message__bubble message__bubble--poll ${deterrentClass}`}
+          onContextMenu={handleContentContextMenu}
+        >
           <div className="poll__question">{question}</div>
           <div className="poll__options">
             {options.map((opt) => (
@@ -2562,7 +2587,7 @@ function MessageBubble({
     return (
       <div className="message">
         <div
-          className={`message__bubble message__bubble--photo ${showGrid ? 'message__bubble--grid' : ''}`}
+          className={`message__bubble message__bubble--photo ${showGrid ? 'message__bubble--grid' : ''} ${deterrentClass}`}
           role="button"
           tabIndex={0}
           onClick={() => onOpenGallery(photoSet)}
@@ -2572,7 +2597,15 @@ function MessageBubble({
               onOpenGallery(photoSet);
             }
           }}
+          onContextMenu={handleContentContextMenu}
         >
+          {isReader && (
+            <div
+              className="deterrent-media-guard"
+              aria-hidden="true"
+              onClick={() => onOpenGallery(photoSet)}
+            />
+          )}
           {showGrid ? (
             <div className={`message__photo-grid message__photo-grid--${Math.min(displayPhotos.length, 4)}`}>
               {displayPhotos.map((src, idx) => (
@@ -2594,7 +2627,10 @@ function MessageBubble({
         </div>
 
         {caption && (
-          <div className="message__caption-bubble">
+          <div
+            className={`message__caption-bubble ${deterrentClass}`}
+            onContextMenu={handleContentContextMenu}
+          >
             <p className="message__caption">{caption}</p>
           </div>
         )}
@@ -2637,11 +2673,16 @@ function MessageBubble({
 
     return (
       <div className="message">
-        <div className="message__bubble message__bubble--photo" style={{ width: 'auto', maxWidth: '100%' }}>
+        <div
+          className={`message__bubble message__bubble--photo ${deterrentClass}`}
+          style={{ width: 'auto', maxWidth: '100%' }}
+          onContextMenu={handleContentContextMenu}
+        >
           {hasAudio ? (
             <audio
               src={message.audioUrl}
               controls
+              controlsList={isReader ? 'nodownload' : undefined}
               preload="metadata"
               style={{ width: '100%', maxWidth: '280px' }}
             />
@@ -2656,7 +2697,11 @@ function MessageBubble({
         </div>
 
         {message.text && (
-          <div className="message__caption-bubble" style={{ marginTop: '10px' }}>
+          <div
+            className={`message__caption-bubble ${deterrentClass}`}
+            style={{ marginTop: '10px' }}
+            onContextMenu={handleContentContextMenu}
+          >
             <p className="message__handwriting">{message.text}</p>
           </div>
         )}
@@ -2697,10 +2742,15 @@ function MessageBubble({
   if (message.type === 'video') {
     return (
       <div className="message">
-        <div className="message__bubble message__bubble--photo" style={{ width: 'auto', maxWidth: '100%' }}>
+        <div
+          className={`message__bubble message__bubble--photo ${deterrentClass}`}
+          style={{ width: 'auto', maxWidth: '100%' }}
+          onContextMenu={handleContentContextMenu}
+        >
           <video
             src={message.videoUrl}
             controls
+            controlsList={isReader ? 'nodownload' : undefined}
             playsInline
             preload="metadata"
             style={{ width: '100%', maxWidth: '280px', borderRadius: '16px', objectFit: 'contain' }}
@@ -2745,7 +2795,10 @@ function MessageBubble({
 
   return (
     <div className="message">
-      <div className="message__bubble message__bubble--text">
+      <div
+        className={`message__bubble message__bubble--text ${deterrentClass}`}
+        onContextMenu={handleContentContextMenu}
+      >
         <p className="message__handwriting">{message.text}</p>
         {/* Date shown at bottom-right next to time */}
         <div className="message__meta">
