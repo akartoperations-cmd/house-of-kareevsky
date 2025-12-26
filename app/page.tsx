@@ -2633,7 +2633,7 @@ function MessageBubble({
   }
 
   if (message.type === 'audio') {
-    const hasAudio = Boolean(message.audioUrl && !message.audioUrl.startsWith('blob:'));
+    const hasAudio = Boolean(message.audioUrl && /^https?:\/\//.test(message.audioUrl));
 
     return (
       <div className="message">
