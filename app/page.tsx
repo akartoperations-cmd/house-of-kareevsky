@@ -1892,30 +1892,21 @@ export default function HomePage() {
     }
   };
 
-  const accessReady = access.status === 'allowed' && isSignedIn;
-
-  if (access.status === 'checking') {
-    return (
-      <div className="welcome-page">
-        <div className="welcome-card">
-          <div className="welcome-loading">Checking access…</div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!accessReady) {
+  // Use access.session directly to avoid race condition with useEffect updating isSignedIn
+  if (access.status !== 'allowed') {
     return (
       <div className="welcome-page">
         <div className="welcome-card">
           <div className="welcome-loading">
-            {access.status === 'redirecting' ? 'Redirecting to the welcome page…' : 'Preparing…'}
+            {access.status === 'checking' ? 'Checking access…' : 'Redirecting to the welcome page…'}
           </div>
-          <div style={{ marginTop: '12px', textAlign: 'center' }}>
-            <a className="welcome-link" href="/welcome">
-              Open welcome
-            </a>
-          </div>
+          {access.status === 'redirecting' && (
+            <div style={{ marginTop: '12px', textAlign: 'center' }}>
+              <a className="welcome-link" href="/welcome">
+                Open welcome
+              </a>
+            </div>
+          )}
         </div>
       </div>
     );
