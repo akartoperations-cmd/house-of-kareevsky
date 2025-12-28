@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import {
   audioItems,
   emojis,
@@ -20,6 +19,7 @@ import {
 import { AuthBar } from './components/AuthBar';
 import { getSupabaseBrowserClient } from './lib/supabaseClient';
 import { uploadMedia, type MediaUploadResult } from './lib/mediaProvider';
+import { useAccessRedirect } from './lib/useAccessRedirect';
 
 type AdminMessage = {
   id: string;
@@ -248,10 +248,9 @@ const BRANDING = {
 };
 
 export default function HomePage() {
-  const router = useRouter();
+  const access = useAccessRedirect('feed');
   const [isAdmin, setIsAdmin] = useState(false);
   const [isSignedIn, setIsSignedIn] = useState(false);
-  const [authChecked, setAuthChecked] = useState(false);
 
   const [activeView, setActiveView] = useState<View>('home');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -374,45 +373,10 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    const supabase = getSupabaseBrowserClient();
-    if (!supabase) {
-      setAuthChecked(true);
-      setIsSignedIn(false);
-      router.replace('/welcome');
-      return;
-    }
-
-    let mounted = true;
-
-    supabase.auth
-      .getSession()
-      .then(({ data }) => {
-        if (!mounted) return;
-        const hasSession = Boolean(data.session);
-        setIsSignedIn(hasSession);
-        setAuthChecked(true);
-        if (!hasSession) router.replace('/welcome');
-      })
-      .catch(() => {
-        if (!mounted) return;
-        setIsSignedIn(false);
-        setAuthChecked(true);
-        router.replace('/welcome');
-      });
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (!mounted) return;
-      const hasSession = Boolean(nextSession);
-      setIsSignedIn(hasSession);
-      setAuthChecked(true);
-      if (!hasSession) router.replace('/welcome');
-    });
-
-    return () => {
-      mounted = false;
-      sub.subscription.unsubscribe();
-    };
-  }, [router]);
+    // Keep local flags aligned with the shared redirect guard to avoid per-component redirect logic.
+    setIsSignedIn(Boolean(access.session));
+    setIsAdmin(access.isAdmin);
+  }, [access.isAdmin, access.session]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1928,7 +1892,9 @@ export default function HomePage() {
     }
   };
 
-  if (!authChecked) {
+  const accessReady = access.status === 'allowed' && isSignedIn;
+
+  if (access.status === 'checking') {
     return (
       <div className="welcome-page">
         <div className="welcome-card">
@@ -1938,11 +1904,13 @@ export default function HomePage() {
     );
   }
 
-  if (!isSignedIn) {
+  if (!accessReady) {
     return (
       <div className="welcome-page">
         <div className="welcome-card">
-          <div className="welcome-loading">Redirecting to the welcome page…</div>
+          <div className="welcome-loading">
+            {access.status === 'redirecting' ? 'Redirecting to the welcome page…' : 'Preparing…'}
+          </div>
           <div style={{ marginTop: '12px', textAlign: 'center' }}>
             <a className="welcome-link" href="/welcome">
               Open welcome

@@ -1,9 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { getSupabaseBrowserClient } from '@/app/lib/supabaseClient';
+import { useMemo, useState } from 'react';
+import { useAccessRedirect } from '@/app/lib/useAccessRedirect';
 
 type Step = 1 | 2 | 3;
 type Status =
@@ -20,44 +19,12 @@ const checkoutUrl = process.env.NEXT_PUBLIC_DIGISTORE_CHECKOUT_URL || '';
 const checkoutConfigured = Boolean(checkoutUrl);
 
 export default function WelcomePage() {
-  const router = useRouter();
+  const access = useAccessRedirect('welcome');
   const [step, setStep] = useState<Step>(1);
   const [showReturnerForm, setShowReturnerForm] = useState(false);
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<Status>(null);
   const [sending, setSending] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(true);
-
-  useEffect(() => {
-    const supabase = getSupabaseBrowserClient();
-    if (!supabase) {
-      setCheckingSession(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    supabase.auth.getSession().then(({ data }) => {
-      if (cancelled) return;
-      if (data.session) {
-        router.replace('/');
-        return;
-      }
-      setCheckingSession(false);
-    });
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (cancelled) return;
-      if (nextSession) {
-        router.replace('/');
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      sub?.subscription.unsubscribe();
-    };
-  }, [router]);
 
   const visibleBlocks = useMemo(() => STORY_BLOCKS.slice(0, step), [step]);
 
@@ -111,11 +78,13 @@ export default function WelcomePage() {
     }
   };
 
-  if (checkingSession) {
+  if (access.status !== 'allowed') {
     return (
       <div className="welcome-page">
         <div className="welcome-card">
-          <div className="welcome-loading">Checking access…</div>
+          <div className="welcome-loading">
+            {access.status === 'redirecting' ? 'Taking you to your feed…' : 'Checking access…'}
+          </div>
         </div>
       </div>
     );
