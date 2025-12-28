@@ -2734,7 +2734,15 @@ button:focus {
 /* i18n post rendering - Text bubbles mode */
 .message--i18n {
   margin-bottom: 200px;
-  max-width: 92%;
+  max-width: 88%;
+  margin-left: 0;
+}
+
+@media (min-width: 520px) {
+  .message--i18n {
+    max-width: 82%;
+    margin-left: 2px;
+  }
 }
 
 .i18n-bubbles {

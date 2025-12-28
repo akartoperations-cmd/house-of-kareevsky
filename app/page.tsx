@@ -232,6 +232,14 @@ const photoCaptions: Record<string, string> = {
   m7: 'Found this in an old notebook. Still true.',
 };
 
+const sortFilesByLastModifiedAsc = (files: File[]) =>
+  [...files].sort((a, b) => {
+    if (a.lastModified === b.lastModified) {
+      return a.name.localeCompare(b.name);
+    }
+    return a.lastModified - b.lastModified;
+  });
+
 // Branding constants (easy to rename later)
 const BRANDING = {
   name: 'Kareevsky',
@@ -314,6 +322,7 @@ export default function HomePage() {
   const [installBannerDismissed, setInstallBannerDismissed] = useState(false);
   const [showInstallInstructions, setShowInstallInstructions] = useState(false);
   const pendingScrollToBottom = useRef(false);
+  const forceScrollToBottom = useRef(false);
   const didInitialScroll = useRef(false);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const scrollElementRef = useRef<HTMLElement | null>(null);
@@ -533,24 +542,37 @@ export default function HomePage() {
     setAutoScrollEnabled(true);
   }, []);
 
+  const queueScrollToBottom = useCallback(
+    (options?: { force?: boolean }) => {
+      pendingScrollToBottom.current = true;
+      if (options?.force) {
+        forceScrollToBottom.current = true;
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     if (activeView === 'home' && isNearBottomRef.current) {
       // When entering the feed, request scroll to the latest post unless the user had scrolled up
-      pendingScrollToBottom.current = true;
+      queueScrollToBottom();
     }
-  }, [activeView]);
+  }, [activeView, queueScrollToBottom]);
 
   useEffect(() => {
     if (activeView !== 'home') return;
 
     if (!didInitialScroll.current) {
       didInitialScroll.current = true;
+      pendingScrollToBottom.current = false;
+      forceScrollToBottom.current = false;
       requestAnimationFrame(scrollToBottomImmediate);
       return;
     }
 
-    if (pendingScrollToBottom.current && autoScrollEnabled) {
+    if (pendingScrollToBottom.current && (autoScrollEnabled || forceScrollToBottom.current)) {
       pendingScrollToBottom.current = false;
+      forceScrollToBottom.current = false;
       requestAnimationFrame(scrollToBottomImmediate);
     }
   }, [activeView, feedItems.length, autoScrollEnabled, scrollToBottomImmediate]);
@@ -746,14 +768,14 @@ export default function HomePage() {
       setAdminInbox({ hasUnread: false, count: 0 });
     }
     if (view === 'home') {
-      pendingScrollToBottom.current = true;
+      queueScrollToBottom();
     }
     setActiveView(view);
     setMenuOpen(false);
   };
 
   const goHome = () => {
-    pendingScrollToBottom.current = true;
+    queueScrollToBottom();
     setActiveView('home');
   };
 
@@ -925,7 +947,7 @@ export default function HomePage() {
         text: createTextBody.trim() || createTextTitle.trim(),
       };
       setFeedMessages((prev) => [...prev, newMsg]);
-      pendingScrollToBottom.current = true;
+      queueScrollToBottom({ force: true });
       showToast('Text post published (mock).');
       setCreateTextTitle('');
       setCreateTextBody('');
@@ -941,7 +963,7 @@ export default function HomePage() {
           caption: mediaCaption.trim() || undefined,
         };
         setFeedMessages((prev) => [...prev, newMsg]);
-        pendingScrollToBottom.current = true;
+        queueScrollToBottom({ force: true });
         showToast('Video post published (mock).');
       } else {
         const newMsg: Message = {
@@ -954,7 +976,7 @@ export default function HomePage() {
           caption: mediaCaption.trim() || undefined,
         };
         setFeedMessages((prev) => [...prev, newMsg]);
-        pendingScrollToBottom.current = true;
+        queueScrollToBottom({ force: true });
         showToast(`Photo post with ${mediaFiles.length} image(s) published (mock).`);
       }
       setMediaFiles([]);
@@ -979,7 +1001,7 @@ export default function HomePage() {
         text: audioUpload.filename || audioFile?.name || 'Audio message',
       };
       setFeedMessages((prev) => [...prev, newMsg]);
-      pendingScrollToBottom.current = true;
+      queueScrollToBottom({ force: true });
       showToast('Audio post published (mock).');
       resetAudioSelection();
     } else if (createTab === 'poll') {
@@ -994,7 +1016,7 @@ export default function HomePage() {
         pollOptions: trimmedOptions.slice(0, 4),
       };
       setFeedMessages((prev) => [...prev, newMsg]);
-      pendingScrollToBottom.current = true;
+      queueScrollToBottom({ force: true });
       showToast('Poll published (mock).');
       setPollQuestion('');
       setPollOptions(['', '']);
@@ -1020,7 +1042,7 @@ export default function HomePage() {
           i18nPack: pack,
         };
         setFeedMessages((prev) => [...prev, newMsg]);
-        pendingScrollToBottom.current = true;
+        queueScrollToBottom({ force: true });
         showToast('Multi-language post published!');
         setI18nTexts({ en: '', es: '', fr: '', it: '' });
       } else {
@@ -1047,7 +1069,7 @@ export default function HomePage() {
           i18nPack: pack,
         };
         setFeedMessages((prev) => [...prev, newMsg]);
-        pendingScrollToBottom.current = true;
+        queueScrollToBottom({ force: true });
         showToast('Multi-language post published!');
         setI18nFiles({ en: [], es: [], fr: [], it: [] });
         setI18nPreviews({ en: [], es: [], fr: [], it: [] });
@@ -1401,9 +1423,10 @@ export default function HomePage() {
         if (!files || files.length === 0) return;
         const accepted = Array.from(files).filter((f) => f.type.startsWith('image/'));
         if (accepted.length === 0) return;
-        const previews = accepted.map((f) => URL.createObjectURL(f));
-        setI18nFiles((prev) => ({ ...prev, [lang]: [...accepted, ...(prev[lang] || [])] }));
-        setI18nPreviews((prev) => ({ ...prev, [lang]: [...previews, ...(prev[lang] || [])] }));
+        const sortedNewFiles = sortFilesByLastModifiedAsc(accepted);
+        const newPreviews = sortedNewFiles.map((f) => URL.createObjectURL(f));
+        setI18nFiles((prev) => ({ ...prev, [lang]: [...(prev[lang] || []), ...sortedNewFiles] }));
+        setI18nPreviews((prev) => ({ ...prev, [lang]: [...(prev[lang] || []), ...newPreviews] }));
       };
 
       const removeI18nImage = (lang: I18nLang, idx: number) => {
@@ -1916,7 +1939,18 @@ export default function HomePage() {
   }
 
   if (!isSignedIn) {
-    return null;
+    return (
+      <div className="welcome-page">
+        <div className="welcome-card">
+          <div className="welcome-loading">Redirecting to the welcome page…</div>
+          <div style={{ marginTop: '12px', textAlign: 'center' }}>
+            <a className="welcome-link" href="/welcome">
+              Open welcome
+            </a>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
