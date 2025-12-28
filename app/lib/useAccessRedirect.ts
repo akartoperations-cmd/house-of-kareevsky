@@ -56,23 +56,48 @@ export function useAccessRedirect(target: AccessGuardTarget): AccessState {
   const checkAdmin = useCallback(async (email: string) => {
     const normalized = normalizeEmail(email);
     if (!normalized) return false;
+
+    // Check localStorage cache first (survives reload, works offline)
+    const storageKey = `admin_status_${normalized}`;
     if (adminCacheRef.current[normalized] !== undefined) {
       return adminCacheRef.current[normalized];
     }
+    try {
+      const cached = localStorage.getItem(storageKey);
+      if (cached !== null) {
+        const val = cached === 'true';
+        adminCacheRef.current[normalized] = val;
+        return val;
+      }
+    } catch {
+      // localStorage unavailable
+    }
+
+    // Fetch with timeout to avoid hanging on slow/offline connections
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
 
     try {
       const res = await fetch('/api/admin/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: normalized }),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
       if (!res.ok) throw new Error('admin check failed');
       const data = (await res.json()) as { isAdmin?: boolean };
       const isAdmin = Boolean(data?.isAdmin);
       adminCacheRef.current[normalized] = isAdmin;
+      try {
+        localStorage.setItem(storageKey, String(isAdmin));
+      } catch {
+        // ignore
+      }
       return isAdmin;
     } catch {
-      adminCacheRef.current[normalized] = false;
+      clearTimeout(timeout);
+      // On network failure, default to false but don't cache permanently
       return false;
     }
   }, []);
