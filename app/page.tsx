@@ -233,12 +233,18 @@ const photoCaptions: Record<string, string> = {
 };
 
 const sortFilesByLastModifiedAsc = (files: File[]) =>
-  [...files].sort((a, b) => {
-    if (a.lastModified === b.lastModified) {
-      return a.name.localeCompare(b.name);
-    }
-    return a.lastModified - b.lastModified;
-  });
+  files
+    .map((f, index) => ({ f, index }))
+    .sort((a, b) => {
+      if (a.f.lastModified !== b.f.lastModified) {
+        return a.f.lastModified - b.f.lastModified;
+      }
+      if (a.index !== b.index) {
+        return a.index - b.index;
+      }
+      return a.f.name.localeCompare(b.f.name);
+    })
+    .map(({ f }) => f);
 
 // Branding constants (easy to rename later)
 const BRANDING = {
@@ -322,6 +328,7 @@ export default function HomePage() {
   const [showInstallInstructions, setShowInstallInstructions] = useState(false);
   const pendingScrollToBottom = useRef(false);
   const forceScrollToBottom = useRef(false);
+  const bodyOverflowRef = useRef<string | null>(null);
   const didInitialScroll = useRef(false);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const scrollElementRef = useRef<HTMLElement | null>(null);
@@ -522,6 +529,24 @@ export default function HomePage() {
       queueScrollToBottom();
     }
   }, [activeView, queueScrollToBottom]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const target = document.body;
+    const restore = () => {
+      if (bodyOverflowRef.current !== null) {
+        target.style.overflow = bodyOverflowRef.current;
+        bodyOverflowRef.current = null;
+      }
+    };
+    if (menuOpen) {
+      bodyOverflowRef.current = target.style.overflow;
+      target.style.overflow = 'hidden';
+    } else {
+      restore();
+    }
+    return restore;
+  }, [menuOpen]);
 
   useEffect(() => {
     if (activeView !== 'home') return;

@@ -1400,6 +1400,8 @@ button:focus {
   padding-bottom: calc(var(--space-xl) + env(safe-area-inset-bottom, 0px));
   z-index: 200;
   box-shadow: var(--shadow-strong);
+  max-height: 80vh;
+  overflow-y: auto;
 }
 
 .bottom-sheet__close-btn {
@@ -2846,7 +2848,8 @@ button:focus {
 .i18n-carousel {
   position: relative;
   max-width: 200px;
-  margin: 0 auto;
+  margin: 0;
+  align-self: flex-start;
 }
 
 .i18n-carousel__image-container {
