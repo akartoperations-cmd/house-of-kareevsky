@@ -555,7 +555,7 @@ export default function HomePage() {
       didInitialScroll.current = true;
       pendingScrollToBottom.current = false;
       forceScrollToBottom.current = false;
-      requestAnimationFrame(scrollToBottomImmediate);
+      requestAnimationFrame(() => requestAnimationFrame(scrollToBottomImmediate));
       return;
     }
 
