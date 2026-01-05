@@ -484,6 +484,9 @@ export default function HomePage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const isPhotoOpen = Boolean(photoViewer);
 
+  const session = access.session;
+  const user = session?.user;
+
   const touchStartX = useRef<number>(0);
   const touchEndX = useRef<number>(0);
   const lastTapTime = useRef<number>(0);
@@ -524,13 +527,13 @@ export default function HomePage() {
 
   useEffect(() => {
     // Keep local flags aligned with the shared redirect guard to avoid per-component redirect logic.
-    setIsSignedIn(Boolean(access.session));
+    setIsSignedIn(Boolean(session));
     setIsAdmin(access.isAdmin);
-    setCurrentUserId(access.session?.user?.id ?? null);
-    if (access.isAdmin && access.session?.user?.id) {
-      adminUserIdRef.current = access.session.user.id;
+    setCurrentUserId(user?.id ?? null);
+    if (access.isAdmin && user?.id) {
+      adminUserIdRef.current = user.id;
     }
-  }, [access.isAdmin, access.session]);
+  }, [access.isAdmin, session, user]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -678,7 +681,7 @@ export default function HomePage() {
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
-    if (!supabase) return;
+    if (!supabase || !user) return;
 
     let cancelled = false;
 
@@ -729,21 +732,21 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [access.session?.user?.id, isAdmin]);
+  }, [user, isAdmin]);
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
-    if (!supabase || !access.session) return;
+    if (!supabase || !user) return;
 
     const upsertProfile = async () => {
       try {
         const locale = typeof navigator !== 'undefined' ? navigator.language : null;
         await supabase.from('subscriber_profiles').upsert({
-          user_id: access.session.user.id,
-          email: access.session.user.email,
+          user_id: user.id,
+          email: user.email,
           display_name:
-            (access.session.user.user_metadata?.full_name as string | undefined) ||
-            (access.session.user.user_metadata?.name as string | undefined) ||
+            (user.user_metadata?.full_name as string | undefined) ||
+            (user.user_metadata?.name as string | undefined) ||
             null,
           locale,
           last_seen_at: new Date().toISOString(),
@@ -756,7 +759,7 @@ export default function HomePage() {
     };
 
     upsertProfile();
-  }, [access.session]);
+  }, [user]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2434,6 +2437,21 @@ export default function HomePage() {
               </a>
             </div>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  if (!session || !user) {
+    return (
+      <div className="welcome-page">
+        <div className="welcome-card">
+          <div className="welcome-loading">Please sign in to continue.</div>
+          <div style={{ marginTop: '12px', textAlign: 'center' }}>
+            <a className="welcome-link" href="/welcome">
+              Open welcome
+            </a>
+          </div>
         </div>
       </div>
     );
