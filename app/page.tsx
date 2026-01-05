@@ -2751,6 +2751,19 @@ export default function HomePage() {
               {galleryPhotos.length > 10 && <span className="swipe-dots__more">+{galleryPhotos.length - 10}</span>}
             </div>
 
+            <div
+              className={`refresh-indicator ${loadingPosts ? 'refresh-indicator--spinning' : ''}`}
+              style={{
+                opacity: loadingPosts || pullDistance > 0 ? 1 : 0,
+                transform: `translateY(${Math.min(pullDistance, 48)}px)`,
+              }}
+            >
+              <span className="refresh-indicator__icon">{Icons.refresh}</span>
+              <span className="refresh-indicator__label">
+                {loadingPosts ? 'Refreshing…' : pullDistance > 50 ? 'Release to refresh' : 'Pull to refresh'}
+              </span>
+            </div>
+
             {/* Feed without date dividers - date shown in each message's meta */}
             <div className="feed feed--overlay">
               {feedItems.map((item) => {
