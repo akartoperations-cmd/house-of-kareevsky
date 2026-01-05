@@ -19,7 +19,13 @@ import {
 } from './lib/intimateMockData';
 import { AuthBar } from './components/AuthBar';
 import { getSupabaseBrowserClient } from './lib/supabaseClient';
-import { uploadMedia, type MediaUploadResult } from './lib/mediaProvider';
+import {
+  DEFAULT_BUCKET as MEDIA_BUCKET,
+  resolvePathsToSignedUrls,
+  uploadMedia,
+  type MediaKind,
+  type MediaUploadResult,
+} from './lib/mediaProvider';
 import { useAccessRedirect } from './lib/useAccessRedirect';
 
 type AdminMessage = {
@@ -156,7 +162,144 @@ type PostRow = {
   comments?: CommentRow[] | null;
 };
 
+type PostMediaWithUrl = PostMediaRow & { url?: string };
+
 const ADMIN_USER_ID = process.env.NEXT_PUBLIC_ADMIN_USER_ID || null;
+
+const readImageDimensions = (file: File): Promise<{ width?: number; height?: number }> =>
+  new Promise((resolve) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    const cleanup = () => {
+      URL.revokeObjectURL(objectUrl);
+    };
+    img.onload = () => {
+      resolve({ width: img.naturalWidth || img.width || undefined, height: img.naturalHeight || img.height || undefined });
+      cleanup();
+    };
+    img.onerror = () => {
+      resolve({});
+      cleanup();
+    };
+    img.src = objectUrl;
+  });
+
+const readVideoMetadata = (file: File): Promise<{ width?: number; height?: number; duration?: number }> =>
+  new Promise((resolve) => {
+    const video = document.createElement('video');
+    const objectUrl = URL.createObjectURL(file);
+    const cleanup = () => {
+      video.src = '';
+      URL.revokeObjectURL(objectUrl);
+    };
+    video.preload = 'metadata';
+    video.onloadedmetadata = () => {
+      const duration = Number.isFinite(video.duration) ? video.duration : undefined;
+      resolve({
+        width: video.videoWidth || undefined,
+        height: video.videoHeight || undefined,
+        duration,
+      });
+      cleanup();
+    };
+    video.onerror = () => {
+      resolve({});
+      cleanup();
+    };
+    video.src = objectUrl;
+  });
+
+const readAudioMetadata = (file: File): Promise<{ duration?: number }> =>
+  new Promise((resolve) => {
+    const audio = document.createElement('audio');
+    const objectUrl = URL.createObjectURL(file);
+    const cleanup = () => {
+      audio.src = '';
+      URL.revokeObjectURL(objectUrl);
+    };
+    audio.preload = 'metadata';
+    audio.onloadedmetadata = () => {
+      resolve({ duration: Number.isFinite(audio.duration) ? audio.duration : undefined });
+      cleanup();
+    };
+    audio.onerror = () => {
+      resolve({});
+      cleanup();
+    };
+    audio.src = objectUrl;
+  });
+
+const extractMediaMetadata = async (
+  file: File,
+  mediaType: MediaKind,
+): Promise<{ width?: number | null; height?: number | null; duration?: number | null }> => {
+  try {
+    if (mediaType === 'image') {
+      const { width, height } = await readImageDimensions(file);
+      return { width: width ?? null, height: height ?? null, duration: null };
+    }
+    if (mediaType === 'video') {
+      const { width, height, duration } = await readVideoMetadata(file);
+      return {
+        width: width ?? null,
+        height: height ?? null,
+        duration: duration ?? null,
+      };
+    }
+    if (mediaType === 'audio') {
+      const { duration } = await readAudioMetadata(file);
+      return { width: null, height: null, duration: duration ?? null };
+    }
+  } catch {
+    // best-effort; swallow errors and return empty metadata
+  }
+  return { width: null, height: null, duration: null };
+};
+
+const resolveMediaWithUrls = async (media: PostMediaRow[] | null | undefined): Promise<PostMediaWithUrl[]> => {
+  const items = (media || []).filter(Boolean);
+  if (!items.length) return [];
+  const uniquePaths = Array.from(new Set(items.map((m) => m.storage_path)));
+  const urlMap = await resolvePathsToSignedUrls(uniquePaths, { bucket: MEDIA_BUCKET });
+  return items.map((m) => ({
+    ...m,
+    url: urlMap.get(m.storage_path) || m.storage_path,
+  }));
+};
+
+const resolveMediaForRows = async (rows: PostRow[]): Promise<PostRow[]> => {
+  const allMedia = rows.flatMap((row) => row.post_media || []);
+  const uniquePaths = Array.from(new Set(allMedia.map((m) => m.storage_path)));
+  const urlMap = await resolvePathsToSignedUrls(uniquePaths, { bucket: MEDIA_BUCKET });
+
+  return rows.map((row) => ({
+    ...row,
+    post_media: (row.post_media || []).map((m) => ({
+      ...m,
+      url: urlMap.get(m.storage_path) || m.storage_path,
+    })),
+  }));
+};
+
+const cleanupPostAndMedia = async (postId: string | null, storagePaths: string[]) => {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) return;
+  try {
+    if (postId) {
+      await supabase.from('post_media').delete().eq('post_id', postId);
+      await supabase.from('posts').delete().eq('id', postId);
+    }
+  } catch {
+    // best-effort cleanup
+  }
+
+  if (storagePaths.length === 0) return;
+  try {
+    await supabase.storage.from(MEDIA_BUCKET).remove(storagePaths);
+  } catch {
+    // ignore cleanup errors
+  }
+};
 
 const coerceMessageType = (value: string): Message['type'] => {
   const allowed: Message['type'][] = ['text', 'photo', 'video', 'audio', 'poll', 'i18n', 'sticker'];
@@ -165,22 +308,30 @@ const coerceMessageType = (value: string): Message['type'] => {
 
 const mapPostRowToMessage = (row: PostRow, adminUserId?: string | null): Message => {
   const meta = (row.metadata as Record<string, unknown> | null) || {};
+  const typedMedia = ((row.post_media as PostMediaWithUrl[] | null | undefined) || []).filter(Boolean);
+  const mediaImages = typedMedia.filter((m) => m.media_type === 'image').map((m) => m.url || m.storage_path);
   const images =
-    (meta.image_urls as string[] | undefined) ||
-    (meta.images as string[] | undefined) ||
-    (row.post_media || [])?.filter((m) => m.media_type === 'image').map((m) => m.storage_path);
+    mediaImages.length > 0
+      ? mediaImages
+      : (meta.image_urls as string[] | undefined) ||
+        (meta.images as string[] | undefined) ||
+        [];
   const messageType = coerceMessageType(row.type);
   const i18nPack = meta.i18n_pack as I18nPack | undefined;
   const pollQuestion = meta.poll_question as string | undefined;
   const pollOptions = meta.poll_options as string[] | undefined;
   const caption = meta.caption as string | undefined;
   const subtitle = meta.subtitle as string | undefined;
+  const videoMedia = typedMedia.find((m) => m.media_type === 'video');
+  const audioMedia = typedMedia.find((m) => m.media_type === 'audio');
   const videoUrl =
-    (meta.video_url as string | undefined) ||
-    (row.post_media || [])?.find((m) => m.media_type === 'video')?.storage_path;
+    videoMedia?.url ||
+    videoMedia?.storage_path ||
+    (meta.video_url as string | undefined);
   const audioUrl =
-    (meta.audio_url as string | undefined) ||
-    (row.post_media || [])?.find((m) => m.media_type === 'audio')?.storage_path;
+    audioMedia?.url ||
+    audioMedia?.storage_path ||
+    (meta.audio_url as string | undefined);
   const bodyText = row.body_text || row.title || (meta.text as string | undefined) || '';
 
   const message: Message = {
@@ -317,6 +468,14 @@ const Icons = {
       <path d="M12 3v12" />
       <path d="M6 13l6 6 6-6" />
       <path d="M5 21h14" />
+    </svg>
+  ),
+  refresh: (
+    <svg className="icon" viewBox="0 0 24 24">
+      <polyline points="3 4 3 10 9 10" />
+      <polyline points="21 20 21 14 15 14" />
+      <path d="M21 8a9 9 0 0 0-17.29-3" />
+      <path d="M3 16a9 9 0 0 0 17.29 3" />
     </svg>
   ),
   play: (
@@ -459,6 +618,7 @@ export default function HomePage() {
   const [feedMessages, setFeedMessages] = useState<Message[]>([]);
   const [postsSource, setPostsSource] = useState<'supabase' | 'mock' | 'uninitialized'>('uninitialized');
   const [loadingPosts, setLoadingPosts] = useState(false);
+  const [pullDistance, setPullDistance] = useState(0);
   const [isSavingPost, setIsSavingPost] = useState(false);
   const [galleryTab, setGalleryTab] = useState<GalleryTab>('photoOfDay');
   const [installPromptEvent, setInstallPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
@@ -472,6 +632,9 @@ export default function HomePage() {
   const bodyOverflowRef = useRef<string | null>(null);
   const didInitialScroll = useRef(false);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+  const postsRequestIdRef = useRef(0);
+  const loadingPostsRef = useRef(false);
+  const isMountedRef = useRef(true);
   const scrollElementRef = useRef<HTMLElement | null>(null);
   const isNearBottomRef = useRef(true);
   const photoViewerContainerRef = useRef<HTMLDivElement | null>(null);
@@ -482,13 +645,24 @@ export default function HomePage() {
   const [rotateHintDismissed, setRotateHintDismissed] = useState(false);
   const [canFullscreen, setCanFullscreen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [viewerViewport, setViewerViewport] = useState({ width: 0, height: 0 });
   const isPhotoOpen = Boolean(photoViewer);
+
+  const getScreenOrientation = () =>
+    typeof window === 'undefined'
+      ? null
+      : (window.screen.orientation as ScreenOrientation & {
+          lock?: (orientation: string) => Promise<void>;
+          unlock?: () => void;
+        });
 
   const session = access.session;
   const user = session?.user;
 
   const touchStartX = useRef<number>(0);
   const touchEndX = useRef<number>(0);
+  const touchStartY = useRef<number>(0);
+  const pullDistanceRef = useRef(0);
   const lastTapTime = useRef<number>(0);
 
   const currentPhoto = galleryPhotos[currentPhotoIndex];
@@ -524,6 +698,13 @@ export default function HomePage() {
     setToastMessage(text);
     setTimeout(() => setToastMessage(null), timeoutMs);
   }, []);
+
+  useEffect(
+    () => () => {
+      isMountedRef.current = false;
+    },
+    [],
+  );
 
   useEffect(() => {
     // Keep local flags aligned with the shared redirect guard to avoid per-component redirect logic.
@@ -592,24 +773,34 @@ export default function HomePage() {
     };
   }, [installBannerDismissed, isStandalone]);
 
-  useEffect(() => {
-    const supabase = getSupabaseBrowserClient();
-    if (!supabase) {
-      setFeedMessages([...messages].reverse());
-      setCommentsByPostId({});
-      setPostsSource('mock');
-      console.info(`[data] Supabase not configured; using mock feed data (${messages.length}).`);
-      return;
-    }
+  const refreshFeed = useCallback(
+    async (reason: 'initial' | 'manual' | 'pull' = 'manual') => {
+      if (loadingPostsRef.current) return;
 
-    let cancelled = false;
+      loadingPostsRef.current = true;
+      const requestId = ++postsRequestIdRef.current;
+      if (isMountedRef.current) {
+        setLoadingPosts(true);
+      }
 
-    const loadPosts = async () => {
-      setLoadingPosts(true);
-      const { data, error } = await supabase
-        .from('posts')
-        .select(
-          `
+      const supabase = getSupabaseBrowserClient();
+      if (!supabase) {
+        if (isMountedRef.current) {
+          setFeedMessages([...messages].reverse());
+          setCommentsByPostId({});
+          setPostsSource('mock');
+          setLoadingPosts(false);
+        }
+        loadingPostsRef.current = false;
+        console.info(`[data] Supabase not configured; using mock feed data (${messages.length}).`);
+        return;
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from('posts')
+          .select(
+            `
             id,
             author_id,
             type,
@@ -640,44 +831,56 @@ export default function HomePage() {
               is_deleted
             )
           `,
-        )
-        .order('created_at', { ascending: true });
+          )
+          .order('created_at', { ascending: true });
 
-      if (cancelled) return;
+        if (!isMountedRef.current || requestId !== postsRequestIdRef.current) return;
 
-      if (error) {
-        console.error('[data] Failed to load posts from Supabase', error);
-        setFeedMessages([]);
-        setCommentsByPostId({});
-        setPostsSource('supabase');
-        console.info('[data] Supabase load failed; falling back to empty feed (no mock data).');
-      } else {
-        const rows = ((data as PostRow[]) || []).filter((row) => !row.is_deleted);
-        const mapped = rows.map((row) => mapPostRowToMessage(row, adminUserIdRef.current));
-        const commentMap: Record<string, Comment[]> = {};
-        rows.forEach((row) => {
-          const mappedComments = (row.comments || [])
-            .filter((c) => !c.is_deleted)
-            .map((c) => mapCommentRow(c, adminUserIdRef.current));
-          if (mappedComments.length) {
-            commentMap[row.id] = mappedComments;
+        if (error) {
+          console.error('[data] Failed to load posts from Supabase', error);
+          setFeedMessages([]);
+          setCommentsByPostId({});
+          setPostsSource('supabase');
+          console.info('[data] Supabase load failed; falling back to empty feed (no mock data).');
+          if (reason !== 'initial') {
+            showToast('Failed to refresh feed. Please try again.');
           }
-        });
-        setFeedMessages(mapped);
-        setCommentsByPostId(commentMap);
-        setPostsSource('supabase');
-        console.info(`[data] Loaded ${mapped.length} posts from Supabase`);
+        } else {
+          const rows = ((data as PostRow[]) || []).filter((row) => !row.is_deleted);
+          const rowsWithUrls = await resolveMediaForRows(rows);
+          const mapped = rowsWithUrls.map((row) => mapPostRowToMessage(row, adminUserIdRef.current));
+          const commentMap: Record<string, Comment[]> = {};
+          rowsWithUrls.forEach((row) => {
+            const mappedComments = (row.comments || [])
+              .filter((c) => !c.is_deleted)
+              .map((c) => mapCommentRow(c, adminUserIdRef.current));
+            if (mappedComments.length) {
+              commentMap[row.id] = mappedComments;
+            }
+          });
+          setFeedMessages(mapped);
+          setCommentsByPostId(commentMap);
+          setPostsSource('supabase');
+          console.info(`[data] Loaded ${mapped.length} posts from Supabase`);
+          if (reason !== 'initial') {
+            showToast('Feed updated');
+          }
+        }
+      } finally {
+        if (requestId === postsRequestIdRef.current) {
+          loadingPostsRef.current = false;
+          if (isMountedRef.current) {
+            setLoadingPosts(false);
+          }
+        }
       }
+    },
+    [showToast],
+  );
 
-      setLoadingPosts(false);
-    };
-
-    loadPosts();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  useEffect(() => {
+    refreshFeed('initial');
+  }, [refreshFeed]);
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
@@ -769,6 +972,7 @@ export default function HomePage() {
 
     const handleResize = () => {
       setIsPortrait(window.innerHeight >= window.innerWidth);
+      setViewerViewport({ width: window.innerWidth, height: window.innerHeight });
     };
 
     handleResize();
@@ -776,7 +980,16 @@ export default function HomePage() {
     window.addEventListener('orientationchange', handleResize);
 
     const handleFullscreenChange = () => {
-      setIsFullscreen(Boolean(document.fullscreenElement));
+      const fullscreenActive = Boolean(document.fullscreenElement);
+      setIsFullscreen(fullscreenActive);
+      const orientation = getScreenOrientation();
+      if (!fullscreenActive && orientation?.unlock) {
+        try {
+          orientation.unlock();
+        } catch {
+          // ignore unlock failures
+        }
+      }
     };
     document.addEventListener('fullscreenchange', handleFullscreenChange);
 
@@ -785,6 +998,19 @@ export default function HomePage() {
       window.removeEventListener('orientationchange', handleResize);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
+  }, []);
+
+  const lockLandscapeOrientation = useCallback(async () => {
+    if (typeof window === 'undefined') return;
+    const orientation = getScreenOrientation();
+    if (!orientation?.lock) return;
+    try {
+      await orientation.lock('landscape');
+    } catch (err) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[photo-viewer] orientation lock failed', err);
+      }
+    }
   }, []);
 
   const evaluateRotateHint = useCallback(() => {
@@ -957,21 +1183,81 @@ export default function HomePage() {
     setShowRotateHint(false);
   };
 
-  const toggleFullscreen = () => {
+  const toggleFullscreen = async () => {
     if (!canFullscreen || !photoViewerContainerRef.current) return;
-    if (!document.fullscreenElement) {
-      photoViewerContainerRef.current.requestFullscreen().catch(() => {});
-    } else {
+    if (document.fullscreenElement) {
+      const orientation = getScreenOrientation();
+      if (orientation?.unlock) {
+        try {
+          orientation.unlock();
+        } catch {
+          // ignore unlock failures
+        }
+      }
       document.exitFullscreen().catch(() => {});
+      return;
+    }
+
+    try {
+      await photoViewerContainerRef.current.requestFullscreen();
+      setViewerViewport({ width: window.innerWidth, height: window.innerHeight });
+      await lockLandscapeOrientation();
+    } catch (err) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[photo-viewer] fullscreen request failed', err);
+      }
     }
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
-    touchStartX.current = e.touches[0].clientX;
+    const touch = e.touches[0];
+    touchStartX.current = touch.clientX;
+    touchStartY.current = touch.clientY;
+    pullDistanceRef.current = 0;
+    setPullDistance(0);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const target =
+      scrollElementRef.current ||
+      (document.scrollingElement as HTMLElement | null) ||
+      document.documentElement;
+    if (!target) return;
+
+    const currentY = e.touches[0].clientY;
+    const deltaY = currentY - touchStartY.current;
+    const isAtTop = (target.scrollTop || 0) <= 0;
+
+    if (!isAtTop || deltaY <= 0) {
+      if (pullDistanceRef.current !== 0) {
+        pullDistanceRef.current = 0;
+        setPullDistance(0);
+      }
+      return;
+    }
+
+    const distance = Math.min(deltaY, 120);
+    pullDistanceRef.current = distance;
+    setPullDistance(distance);
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
     touchEndX.current = e.changedTouches[0].clientX;
+    const atTop =
+      (scrollElementRef.current?.scrollTop || 0) <= 0 ||
+      (document.documentElement?.scrollTop || 0) <= 0 ||
+      window.scrollY <= 0;
+    const shouldRefresh = pullDistanceRef.current > 60 && atTop;
+
+    if (pullDistanceRef.current !== 0) {
+      pullDistanceRef.current = 0;
+      setPullDistance(0);
+    }
+
+    if (shouldRefresh) {
+      refreshFeed('pull');
+    }
+
     const diff = touchStartX.current - touchEndX.current;
     const threshold = 50;
 
@@ -1034,6 +1320,10 @@ export default function HomePage() {
 
   const openMenu = () => setMenuOpen(true);
   const closeMenu = () => setMenuOpen(false);
+
+  const handleManualRefresh = useCallback(() => {
+    refreshFeed('manual');
+  }, [refreshFeed]);
 
   const dismissInstallBanner = useCallback(() => {
     setShowInstallBanner(false);
@@ -1185,6 +1475,9 @@ export default function HomePage() {
 
   const resetAudioSelection = () => {
     audioUploadRequestId.current += 1;
+    if (audioUpload?.url && audioUpload.url.startsWith('blob:')) {
+      URL.revokeObjectURL(audioUpload.url);
+    }
     setAudioFile(null);
     setAudioUpload(null);
     setAudioUploading(false);
@@ -1214,10 +1507,19 @@ export default function HomePage() {
     setAudioUploading(true);
 
     try {
-      const uploaded = await uploadMedia(file, 'audio');
-      if (audioUploadRequestId.current !== requestId) return;
-      setAudioUpload(uploaded);
-      showToast('Audio uploaded.');
+      const previewUrl = URL.createObjectURL(file);
+      if (audioUploadRequestId.current !== requestId) {
+        URL.revokeObjectURL(previewUrl);
+        return;
+      }
+      setAudioUpload({
+        url: previewUrl,
+        mimeType: file.type,
+        size: file.size,
+        filename: file.name,
+        storagePath: 'pending',
+      });
+      showToast('Audio ready.');
     } catch (err) {
       if (audioUploadRequestId.current !== requestId) return;
       console.error(err);
@@ -1325,98 +1627,167 @@ export default function HomePage() {
           return;
         }
 
-        const uploads = await Promise.all(
-          mediaFiles.map((file) => uploadMedia(file, mediaIsVideo ? 'video' : 'image')),
-        );
-        const mediaUrls = uploads.map((u) => u.url);
-        const { data: postData, error: postError } = await supabase
-          .from('posts')
-          .insert({
-            author_id: authorId,
-            type: mediaIsVideo ? 'video' : 'photo',
-            body_text: mediaCaption.trim() || null,
-            visibility: 'public',
-            metadata: {
-              caption: mediaCaption.trim() || null,
-              image_urls: mediaIsVideo ? undefined : mediaUrls,
-              video_url: mediaIsVideo ? mediaUrls[0] : undefined,
-              time_label: timeLabel,
-            },
-          })
-          .select()
-          .single();
-        if (postError) throw postError;
+        const mediaType: MediaKind = mediaIsVideo ? 'video' : 'image';
+        let newPostId: string | null = null;
+        const uploadedPaths: string[] = [];
 
-        let insertedMedia: PostMediaRow[] = [];
-        if (uploads.length) {
-          const mediaRows = uploads.map((u) => ({
-            post_id: (postData as PostRow).id,
-            storage_path: u.storagePath || u.url,
-            media_type: mediaIsVideo ? 'video' : 'image',
-            width: null,
-            height: null,
-            duration: null,
+        try {
+          const baseMetadata = {
+            caption: mediaCaption.trim() || null,
+            time_label: timeLabel,
+          };
+
+          const { data: postData, error: postError } = await supabase
+            .from('posts')
+            .insert({
+              author_id: authorId,
+              type: mediaIsVideo ? 'video' : 'photo',
+              body_text: mediaCaption.trim() || null,
+              visibility: 'public',
+              metadata: baseMetadata,
+            })
+            .select()
+            .single();
+          if (postError) throw postError;
+
+          newPostId = (postData as PostRow).id;
+
+          const mediaMetadata = await Promise.all(mediaFiles.map((file) => extractMediaMetadata(file, mediaType)));
+          const uploads = await Promise.all(
+            mediaFiles.map((file) =>
+              uploadMedia(file, mediaType, { postId: newPostId as string, preferSignedUrl: true }),
+            ),
+          );
+          uploads.forEach((u) => uploadedPaths.push(u.storagePath));
+
+          const mediaRows = uploads.map((u, idx) => ({
+            post_id: newPostId,
+            storage_path: u.storagePath,
+            media_type: mediaType,
+            width: mediaMetadata[idx]?.width ?? null,
+            height: mediaMetadata[idx]?.height ?? null,
+            duration: mediaMetadata[idx]?.duration ?? null,
           }));
+
           const { data: mediaData, error: mediaError } = await supabase.from('post_media').insert(mediaRows).select();
           if (mediaError) throw mediaError;
-          insertedMedia = (mediaData as PostMediaRow[]) || [];
-        }
+          const insertedMedia = (mediaData as PostMediaRow[]) || mediaRows;
+          const resolvedMedia = await resolveMediaWithUrls(insertedMedia);
 
-        const mapped = mapPostRowToMessage(
-          { ...(postData as PostRow), post_media: insertedMedia, comments: [] },
-          adminUserIdRef.current,
-        );
-        setFeedMessages((prev) => [...prev, mapped]);
-        queueScrollToBottom({ force: true });
-        showToast(mediaIsVideo ? 'Video post published.' : `Photo post with ${uploads.length} image(s) published.`);
-        setMediaFiles([]);
-        setMediaPreviews([]);
-        setMediaCaption('');
-        setMediaIsVideo(false);
+          const imageUrls = !mediaIsVideo ? resolvedMedia.map((m) => m.url || m.storage_path) : undefined;
+          const videoUrl = mediaIsVideo ? resolvedMedia[0]?.url || resolvedMedia[0]?.storage_path : undefined;
+
+          const { data: updatedPost, error: updateError } = await supabase
+            .from('posts')
+            .update({
+              metadata: {
+                ...baseMetadata,
+                image_urls: imageUrls,
+                video_url: videoUrl,
+              },
+            })
+            .eq('id', newPostId)
+            .select()
+            .single();
+          if (updateError) throw updateError;
+
+          const mapped = mapPostRowToMessage(
+            { ...(updatedPost as PostRow), post_media: resolvedMedia, comments: [] },
+            adminUserIdRef.current,
+          );
+          setFeedMessages((prev) => [...prev, mapped]);
+          queueScrollToBottom({ force: true });
+          showToast(mediaIsVideo ? 'Video post published.' : `Photo post with ${uploads.length} image(s) published.`);
+          setMediaFiles([]);
+          setMediaPreviews([]);
+          setMediaCaption('');
+          setMediaIsVideo(false);
+        } catch (err) {
+          await cleanupPostAndMedia(newPostId, uploadedPaths);
+          throw err;
+        }
       } else if (createTab === 'audio') {
         if (audioUploading) {
           showToast('Please wait for the audio upload to finish.');
           return;
         }
-        if (!audioUpload?.url) {
+        if (!audioFile) {
           showToast('Upload an audio file first.');
           return;
         }
-        const { data, error } = await supabase
-          .from('posts')
-          .insert({
-            author_id: authorId,
-            type: 'audio',
-            body_text: audioUpload.filename || audioFile?.name || 'Audio message',
-            visibility: 'public',
-            metadata: {
-              audio_url: audioUpload.url,
-              time_label: timeLabel,
-            },
-          })
-          .select()
-          .single();
-        if (error) throw error;
+        let newPostId: string | null = null;
+        const uploadedPaths: string[] = [];
 
-        const mapped = mapPostRowToMessage(
-          {
-            ...(data as PostRow),
-            post_media: [
-              {
-                id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
-                post_id: (data as PostRow).id,
-                storage_path: audioUpload.storagePath || audioUpload.url,
-                media_type: 'audio',
+        try {
+          const audioMetadata = await extractMediaMetadata(audioFile, 'audio');
+
+          const { data: postData, error: postError } = await supabase
+            .from('posts')
+            .insert({
+              author_id: authorId,
+              type: 'audio',
+              body_text: audioFile.name || 'Audio message',
+              visibility: 'public',
+              metadata: {
+                time_label: timeLabel,
               },
-            ],
-            comments: [],
-          },
-          adminUserIdRef.current,
-        );
-        setFeedMessages((prev) => [...prev, mapped]);
-        queueScrollToBottom({ force: true });
-        showToast('Audio post published.');
-        resetAudioSelection();
+            })
+            .select()
+            .single();
+          if (postError) throw postError;
+
+          newPostId = (postData as PostRow).id;
+
+          const uploaded = await uploadMedia(audioFile, 'audio', {
+            postId: newPostId as string,
+            preferSignedUrl: true,
+          });
+          uploadedPaths.push(uploaded.storagePath);
+
+          const mediaRow = {
+            post_id: newPostId,
+            storage_path: uploaded.storagePath,
+            media_type: 'audio' as const,
+            width: null,
+            height: null,
+            duration: audioMetadata.duration ?? null,
+          };
+
+          const { data: mediaData, error: mediaError } = await supabase
+            .from('post_media')
+            .insert(mediaRow)
+            .select();
+          if (mediaError) throw mediaError;
+
+          const insertedMedia = (mediaData as PostMediaRow[]) || [mediaRow];
+          const resolvedMedia = await resolveMediaWithUrls(insertedMedia);
+          const audioUrl = resolvedMedia[0]?.url || resolvedMedia[0]?.storage_path || uploaded.url;
+
+          const { data: updatedPost, error: updateError } = await supabase
+            .from('posts')
+            .update({
+              metadata: {
+                audio_url: audioUrl,
+                time_label: timeLabel,
+              },
+            })
+            .eq('id', newPostId)
+            .select()
+            .single();
+          if (updateError) throw updateError;
+
+          const mapped = mapPostRowToMessage(
+            { ...(updatedPost as PostRow), post_media: resolvedMedia, comments: [] },
+            adminUserIdRef.current,
+          );
+          setFeedMessages((prev) => [...prev, mapped]);
+          queueScrollToBottom({ force: true });
+          showToast('Audio post published.');
+          resetAudioSelection();
+        } catch (err) {
+          await cleanupPostAndMedia(newPostId, uploadedPaths);
+          throw err;
+        }
       } else if (createTab === 'poll') {
         const trimmedOptions = pollOptions.map((o) => o.trim()).filter(Boolean);
         if (!pollQuestion.trim() || trimmedOptions.length < 2) return;
@@ -2323,6 +2694,7 @@ export default function HomePage() {
           <div
             className={`home-view swipe-container ${isPhotoOpen ? 'home-view--hidden' : ''}`}
             onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
             onClick={handleFreeAreaClick}
           >
@@ -2408,6 +2780,16 @@ export default function HomePage() {
                 <span className="badge badge--pill">{unreadAdminCount}</span>
               </button>
             )}
+
+            <button
+              type="button"
+              className={`refresh-btn ${loadingPosts ? 'refresh-btn--loading' : ''}`}
+              onClick={handleManualRefresh}
+              aria-label="Refresh feed"
+              disabled={loadingPosts}
+            >
+              <span className="refresh-btn__icon">{Icons.refresh}</span>
+            </button>
 
             <button
               type="button"
