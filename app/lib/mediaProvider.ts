@@ -121,12 +121,13 @@ const uploadWithSupabase = async (file: File, kind: MediaKind, options?: MediaUp
     upsert: true,
   });
   if (uploadError) {
+    const statusCode = 'statusCode' in uploadError ? (uploadError as { statusCode?: number }).statusCode : undefined;
     console.error('[media-provider] Supabase upload failed', {
       bucket,
       objectPath,
       message: uploadError.message,
       name: uploadError.name,
-      statusCode: uploadError.statusCode,
+      statusCode,
     });
     throw new Error(uploadError.message || 'Unable to upload file.');
   }
