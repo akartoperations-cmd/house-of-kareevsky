@@ -1599,6 +1599,10 @@ export default function HomePage() {
     setIsSavingPost(true);
     const { data: sessionData } = await supabase.auth.getSession();
     const authorId = sessionData?.session?.user?.id ?? null;
+    if (!authorId) {
+      showToast('Please sign in to publish.');
+      return;
+    }
     const timeLabel = formatShortTime();
 
     try {
