@@ -27,7 +27,8 @@ export type MediaUploadOptions = {
 };
 
 export const MEDIA_PROVIDER = (process.env.NEXT_PUBLIC_MEDIA_PROVIDER || 'supabase').toLowerCase();
-export const DEFAULT_BUCKET = process.env.NEXT_PUBLIC_MEDIA_BUCKET || 'media';
+// The storage bucket is fixed to "media" to match the existing Supabase bucket.
+export const DEFAULT_BUCKET = 'media';
 export const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days for signed URL fallback
 
 const sanitizeFilename = (filename: string) => filename.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -120,6 +121,13 @@ const uploadWithSupabase = async (file: File, kind: MediaKind, options?: MediaUp
     upsert: true,
   });
   if (uploadError) {
+    console.error('[media-provider] Supabase upload failed', {
+      bucket,
+      objectPath,
+      message: uploadError.message,
+      name: uploadError.name,
+      statusCode: uploadError.statusCode,
+    });
     throw new Error(uploadError.message || 'Unable to upload file.');
   }
 

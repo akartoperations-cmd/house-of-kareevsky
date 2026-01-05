@@ -1658,7 +1658,11 @@ export default function HomePage() {
           const mediaMetadata = await Promise.all(mediaFiles.map((file) => extractMediaMetadata(file, mediaType)));
           const uploads = await Promise.all(
             mediaFiles.map((file) =>
-              uploadMedia(file, mediaType, { postId: newPostId as string, preferSignedUrl: true }),
+              uploadMedia(file, mediaType, {
+                bucket: MEDIA_BUCKET,
+                postId: newPostId as string,
+                preferSignedUrl: true,
+              }),
             ),
           );
           uploads.forEach((u) => uploadedPaths.push(u.storagePath));
@@ -1706,6 +1710,7 @@ export default function HomePage() {
           setMediaCaption('');
           setMediaIsVideo(false);
         } catch (err) {
+          console.error('[media-upload] Failed to upload media post', err);
           await cleanupPostAndMedia(newPostId, uploadedPaths);
           throw err;
         }
@@ -1742,6 +1747,7 @@ export default function HomePage() {
           newPostId = (postData as PostRow).id;
 
           const uploaded = await uploadMedia(audioFile, 'audio', {
+            bucket: MEDIA_BUCKET,
             postId: newPostId as string,
             preferSignedUrl: true,
           });
@@ -1892,8 +1898,13 @@ export default function HomePage() {
         showToast('Saved.');
       }
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       console.error('[data] Failed to save post', err);
-      showToast('Failed to save post. Please try again.');
+      const toastMessage =
+        createTab === 'media'
+          ? `Failed to save media post: ${errorMessage}`
+          : 'Failed to save post. Please try again.';
+      showToast(toastMessage);
     } finally {
       setIsSavingPost(false);
     }
