@@ -11,9 +11,12 @@ export function getSupabaseBrowserClient(): SupabaseClient | null {
   if (cachedClient) return cachedClient;
   if (typeof window === 'undefined') return null;
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !supabaseAnonKey) return null;
+  const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
+  const supabaseAnonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '').trim();
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.error('[supabase] Browser client not configured: missing URL or anon key');
+    return null;
+  }
 
   cachedClient = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
