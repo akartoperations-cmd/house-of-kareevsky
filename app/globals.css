@@ -650,6 +650,7 @@ button:focus {
   inset: 0;
   width: 100vw;
   height: 100vh;
+  overflow: hidden;
   padding: 0;
   background: #000;
   backdrop-filter: none;
@@ -674,6 +675,7 @@ button:focus {
   max-height: none;
   padding: 0;
   gap: 0;
+  overflow: hidden;
 }
 
 .photo-viewer__image {

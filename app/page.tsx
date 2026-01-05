@@ -1195,14 +1195,17 @@ export default function HomePage() {
         }
       }
       document.exitFullscreen().catch(() => {});
+      setIsFullscreen(false);
       return;
     }
 
     try {
+      setIsFullscreen(true);
       await photoViewerContainerRef.current.requestFullscreen();
       setViewerViewport({ width: window.innerWidth, height: window.innerHeight });
       await lockLandscapeOrientation();
     } catch (err) {
+      setIsFullscreen(false);
       if (process.env.NODE_ENV !== 'production') {
         console.warn('[photo-viewer] fullscreen request failed', err);
       }
