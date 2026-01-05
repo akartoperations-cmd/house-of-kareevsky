@@ -7,6 +7,7 @@ export type MediaUploadResult = {
   mimeType: string;
   size: number;
   filename: string;
+  storagePath?: string;
 };
 
 const MEDIA_PROVIDER = (process.env.NEXT_PUBLIC_MEDIA_PROVIDER || 'supabase').toLowerCase();
@@ -58,6 +59,7 @@ const uploadWithSupabase = async (file: File, kind: MediaKind): Promise<MediaUpl
     mimeType: file.type,
     size: file.size,
     filename: file.name,
+    storagePath: objectPath,
   };
 };
 

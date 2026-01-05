@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import {
   audioItems,
   emojis,
@@ -98,6 +99,141 @@ const formatShortDate = (value?: string) => {
     month: 'short',
     day: 'numeric',
   }).format(d);
+};
+
+const formatShortTime = (value?: string) => {
+  const d = parseDate(value);
+  return new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(d);
+};
+
+type PostMediaRow = {
+  id: string;
+  post_id?: string | null;
+  storage_path: string;
+  media_type: string;
+  width?: number | null;
+  height?: number | null;
+  duration?: number | null;
+  created_at?: string | null;
+};
+
+type CommentRow = {
+  id: string;
+  post_id?: string | null;
+  user_id?: string | null;
+  body_text?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  is_deleted?: boolean | null;
+};
+
+type DirectMessageRow = {
+  id: string;
+  thread_id?: string | null;
+  from_user_id?: string | null;
+  to_admin_id?: string | null;
+  body_text?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  is_deleted?: boolean | null;
+};
+
+type PostRow = {
+  id: string;
+  author_id?: string | null;
+  type: string;
+  title?: string | null;
+  body_text?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  is_deleted?: boolean | null;
+  visibility?: string | null;
+  metadata?: Record<string, unknown> | null;
+  post_media?: PostMediaRow[] | null;
+  comments?: CommentRow[] | null;
+};
+
+const ADMIN_USER_ID = process.env.NEXT_PUBLIC_ADMIN_USER_ID || null;
+
+const coerceMessageType = (value: string): Message['type'] => {
+  const allowed: Message['type'][] = ['text', 'photo', 'video', 'audio', 'poll', 'i18n', 'sticker'];
+  return allowed.includes(value as Message['type']) ? (value as Message['type']) : 'text';
+};
+
+const mapPostRowToMessage = (row: PostRow, adminUserId?: string | null): Message => {
+  const meta = (row.metadata as Record<string, unknown> | null) || {};
+  const images =
+    (meta.image_urls as string[] | undefined) ||
+    (meta.images as string[] | undefined) ||
+    (row.post_media || [])?.filter((m) => m.media_type === 'image').map((m) => m.storage_path);
+  const messageType = coerceMessageType(row.type);
+  const i18nPack = meta.i18n_pack as I18nPack | undefined;
+  const pollQuestion = meta.poll_question as string | undefined;
+  const pollOptions = meta.poll_options as string[] | undefined;
+  const caption = meta.caption as string | undefined;
+  const subtitle = meta.subtitle as string | undefined;
+  const videoUrl =
+    (meta.video_url as string | undefined) ||
+    (row.post_media || [])?.find((m) => m.media_type === 'video')?.storage_path;
+  const audioUrl =
+    (meta.audio_url as string | undefined) ||
+    (row.post_media || [])?.find((m) => m.media_type === 'audio')?.storage_path;
+  const bodyText = row.body_text || row.title || (meta.text as string | undefined) || '';
+
+  const message: Message = {
+    id: row.id,
+    type: messageType,
+    time: (meta.time_label as string | undefined) || formatShortTime(row.created_at || undefined),
+    createdAt: row.created_at || undefined,
+    text: bodyText,
+    caption,
+    subtitle,
+    pollQuestion,
+    pollOptions,
+    i18nPack,
+  };
+
+  if (messageType === 'photo') {
+    message.imageUrl = images?.[0];
+    message.images = images;
+  }
+  if (messageType === 'video') {
+    message.videoUrl = videoUrl;
+  }
+  if (messageType === 'audio') {
+    message.audioUrl = audioUrl;
+  }
+
+  // Posts authored by the configured admin get an admin flag for downstream UI if needed.
+  if (adminUserId && row.author_id && row.author_id === adminUserId) {
+    message.isTest = false;
+  }
+
+  return message;
+};
+
+const mapCommentRow = (row: CommentRow, adminUserId?: string | null): Comment => {
+  const isAdminAuthor = Boolean(adminUserId && row.user_id && row.user_id === adminUserId);
+  return {
+    id: row.id,
+    author: isAdminAuthor ? 'Kareevsky' : 'Member',
+    text: row.body_text || '',
+  };
+};
+
+const mapDirectMessageRow = (row: DirectMessageRow, adminUserId?: string | null): PersonalMessage => {
+  const isAdminAuthor = Boolean(adminUserId && row.from_user_id && row.from_user_id === adminUserId);
+  return {
+    id: row.id,
+    author: isAdminAuthor ? 'artist' : 'listener',
+    time: formatShortTime(row.created_at || undefined),
+    createdAt: row.created_at || undefined,
+    date: formatShortDate(row.created_at || undefined),
+    text: row.body_text || '',
+  };
 };
 
 const Icons = {
@@ -257,6 +393,7 @@ export default function HomePage() {
   const access = useAccessRedirect('feed');
   const [isAdmin, setIsAdmin] = useState(false);
   const [isSignedIn, setIsSignedIn] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const [activeView, setActiveView] = useState<View>('home');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -310,6 +447,7 @@ export default function HomePage() {
   const audioUploadRequestId = useRef(0);
   const i18nFileInputRefs = useRef<Record<I18nLang, HTMLInputElement | null>>({ en: null, es: null, fr: null, it: null });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const adminUserIdRef = useRef<string | null>(ADMIN_USER_ID);
   const [photoAboutOpen, setPhotoAboutOpen] = useState(false);
   const [galleryPhotos, setGalleryPhotos] = useState<Photo[]>(() => [...photos].reverse());
   const [addPhotoDayOpen, setAddPhotoDayOpen] = useState(false);
@@ -318,7 +456,10 @@ export default function HomePage() {
   const [newPhotoDayDescs, setNewPhotoDayDescs] = useState<string[]>([]);
   const [newPhotoDayDates, setNewPhotoDayDates] = useState<string[]>([]);
   const [newPhotoDayTimes, setNewPhotoDayTimes] = useState<string[]>([]);
-  const [feedMessages, setFeedMessages] = useState<Message[]>(() => [...messages].reverse());
+  const [feedMessages, setFeedMessages] = useState<Message[]>([]);
+  const [postsSource, setPostsSource] = useState<'supabase' | 'mock' | 'uninitialized'>('uninitialized');
+  const [loadingPosts, setLoadingPosts] = useState(false);
+  const [isSavingPost, setIsSavingPost] = useState(false);
   const [galleryTab, setGalleryTab] = useState<GalleryTab>('photoOfDay');
   const [installPromptEvent, setInstallPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState(false);
@@ -355,7 +496,9 @@ export default function HomePage() {
   const commentsForActiveMessage =
     activeMessageId && commentsByPostId[activeMessageId]
       ? commentsByPostId[activeMessageId]
-      : fakeComments;
+      : postsSource === 'mock'
+        ? fakeComments
+        : [];
   const unreadAdminCount = adminMessages.filter((m) => m.isUnread).length;
   const feedItems = useMemo(() => {
     const items: Array<
@@ -383,6 +526,10 @@ export default function HomePage() {
     // Keep local flags aligned with the shared redirect guard to avoid per-component redirect logic.
     setIsSignedIn(Boolean(access.session));
     setIsAdmin(access.isAdmin);
+    setCurrentUserId(access.session?.user?.id ?? null);
+    if (access.isAdmin && access.session?.user?.id) {
+      adminUserIdRef.current = access.session.user.id;
+    }
   }, [access.isAdmin, access.session]);
 
   useEffect(() => {
@@ -441,6 +588,175 @@ export default function HomePage() {
       window.removeEventListener('appinstalled', handleAppInstalled);
     };
   }, [installBannerDismissed, isStandalone]);
+
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      setFeedMessages([...messages].reverse());
+      setCommentsByPostId({});
+      setPostsSource('mock');
+      console.info(`[data] Supabase not configured; using mock feed data (${messages.length}).`);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadPosts = async () => {
+      setLoadingPosts(true);
+      const { data, error } = await supabase
+        .from('posts')
+        .select(
+          `
+            id,
+            author_id,
+            type,
+            title,
+            body_text,
+            created_at,
+            updated_at,
+            is_deleted,
+            visibility,
+            metadata,
+            post_media (
+              id,
+              post_id,
+              storage_path,
+              media_type,
+              width,
+              height,
+              duration,
+              created_at
+            ),
+            comments:comments (
+              id,
+              post_id,
+              user_id,
+              body_text,
+              created_at,
+              updated_at,
+              is_deleted
+            )
+          `,
+        )
+        .order('created_at', { ascending: true });
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error('[data] Failed to load posts from Supabase', error);
+        setFeedMessages([]);
+        setCommentsByPostId({});
+        setPostsSource('supabase');
+        console.info('[data] Supabase load failed; falling back to empty feed (no mock data).');
+      } else {
+        const rows = ((data as PostRow[]) || []).filter((row) => !row.is_deleted);
+        const mapped = rows.map((row) => mapPostRowToMessage(row, adminUserIdRef.current));
+        const commentMap: Record<string, Comment[]> = {};
+        rows.forEach((row) => {
+          const mappedComments = (row.comments || [])
+            .filter((c) => !c.is_deleted)
+            .map((c) => mapCommentRow(c, adminUserIdRef.current));
+          if (mappedComments.length) {
+            commentMap[row.id] = mappedComments;
+          }
+        });
+        setFeedMessages(mapped);
+        setCommentsByPostId(commentMap);
+        setPostsSource('supabase');
+        console.info(`[data] Loaded ${mapped.length} posts from Supabase`);
+      }
+
+      setLoadingPosts(false);
+    };
+
+    loadPosts();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+
+    let cancelled = false;
+
+    const loadDirectMessages = async () => {
+      const { data, error } = await supabase
+        .from('direct_messages')
+        .select(
+          `
+            id,
+            thread_id,
+            from_user_id,
+            to_admin_id,
+            body_text,
+            created_at,
+            updated_at,
+            is_deleted
+          `,
+        )
+        .order('created_at', { ascending: true });
+
+      if (cancelled) return;
+      if (error) {
+        console.error('[data] Failed to load direct messages', error);
+        return;
+      }
+
+      const mapped =
+        (data as DirectMessageRow[] | null | undefined)?.filter((row) => !row.is_deleted).map((row) => mapDirectMessageRow(row, adminUserIdRef.current)) || [];
+
+      const adminLetters: AdminMessage[] = mapped
+        .filter((msg) => msg.author === 'artist')
+        .map((msg) => ({
+          id: msg.id,
+          author: 'Kareevsky',
+          text: msg.text,
+          time: msg.time,
+          date: msg.date,
+          createdAt: msg.createdAt,
+          isUnread: false,
+        }));
+
+      setAdminMessages(adminLetters);
+      setPersonalMessages(mapped.filter((msg) => msg.author === 'listener'));
+    };
+
+    loadDirectMessages();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [access.session?.user?.id, isAdmin]);
+
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !access.session) return;
+
+    const upsertProfile = async () => {
+      try {
+        const locale = typeof navigator !== 'undefined' ? navigator.language : null;
+        await supabase.from('subscriber_profiles').upsert({
+          user_id: access.session.user.id,
+          email: access.session.user.email,
+          display_name:
+            (access.session.user.user_metadata?.full_name as string | undefined) ||
+            (access.session.user.user_metadata?.name as string | undefined) ||
+            null,
+          locale,
+          last_seen_at: new Date().toISOString(),
+        });
+      } catch (err) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[data] subscriber_profiles upsert failed', err);
+        }
+      }
+    };
+
+    upsertProfile();
+  }, [access.session]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -792,22 +1108,60 @@ export default function HomePage() {
     setAdminInbox({ hasUnread: false, count: 0 });
   };
 
-  const sendMessage = () => {
-    if (!isAdmin) return;
+  const sendMessage = async () => {
     const text = writeText.trim();
     if (!text) return;
-    const newMessage: PersonalMessage = {
-      id: `l-${Date.now()}`,
-      author: 'listener',
-      time: 'now',
-      date: 'Today',
-      createdAt: new Date().toISOString(),
-      text,
-    };
-    setPersonalMessages((prev) => [...prev, newMessage]);
-    setAdminInbox((prev) => ({ hasUnread: true, count: prev.count + 1 }));
-    showToast('Your message has been sent (mock).');
-    setWriteText('');
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      showToast('Supabase is not configured.');
+      return;
+    }
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData?.session?.user?.id ?? null;
+    if (!userId) {
+      showToast('Sign in to send a message.');
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('direct_messages')
+        .insert({
+          thread_id: null,
+          from_user_id: userId,
+          to_admin_id: adminUserIdRef.current,
+          body_text: text,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      const mapped = mapDirectMessageRow(data as DirectMessageRow, adminUserIdRef.current);
+
+      if (mapped.author === 'artist') {
+        setAdminMessages((prev) => [
+          ...prev,
+          {
+            id: mapped.id,
+            author: 'Kareevsky',
+            time: mapped.time,
+            date: mapped.date,
+            createdAt: mapped.createdAt,
+            text: mapped.text,
+            isUnread: false,
+          },
+        ]);
+      } else {
+        setPersonalMessages((prev) => [...prev, mapped]);
+        setAdminInbox((prev) => ({ hasUnread: true, count: prev.count + 1 }));
+      }
+      showToast('Message sent.');
+      setWriteText('');
+    } catch (err) {
+      console.error('[data] Failed to send direct message', err);
+      showToast('Failed to send message. Please try again.');
+    }
   };
 
   const handleTreat = (type: string) => {
@@ -924,147 +1278,247 @@ export default function HomePage() {
     setNewPhotoDayTimes((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  const handleCreateSave = () => {
+  const handleCreateSave = async () => {
     if (!isAdmin) return;
-    if (createTab === 'text') {
-      if (!createTextTitle.trim() && !createTextBody.trim()) return;
-      const newMsg: Message = {
-        id: `m-${Date.now()}`,
-        type: 'text',
-        time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
-        createdAt: new Date().toISOString(),
-        text: createTextBody.trim() || createTextTitle.trim(),
-      };
-      setFeedMessages((prev) => [...prev, newMsg]);
-      queueScrollToBottom({ force: true });
-      showToast('Text post published (mock).');
-      setCreateTextTitle('');
-      setCreateTextBody('');
-    } else if (createTab === 'media') {
-      if (mediaFiles.length === 0) return;
-      if (mediaIsVideo) {
-        const newMsg: Message = {
-          id: `v-${Date.now()}`,
-          type: 'video',
-          time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
-          createdAt: new Date().toISOString(),
-          videoUrl: mediaPreviews[0] || '',
-          caption: mediaCaption.trim() || undefined,
-        };
-        setFeedMessages((prev) => [...prev, newMsg]);
-        queueScrollToBottom({ force: true });
-        showToast('Video post published (mock).');
-      } else {
-        const newMsg: Message = {
-          id: `m-${Date.now()}`,
-          type: 'photo',
-          time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
-          createdAt: new Date().toISOString(),
-          imageUrl: mediaPreviews[0] || '',
-          images: mediaPreviews,
-          caption: mediaCaption.trim() || undefined,
-        };
-        setFeedMessages((prev) => [...prev, newMsg]);
-        queueScrollToBottom({ force: true });
-        showToast(`Photo post with ${mediaFiles.length} image(s) published (mock).`);
-      }
-      setMediaFiles([]);
-      setMediaPreviews([]);
-      setMediaCaption('');
-      setMediaIsVideo(false);
-    } else if (createTab === 'audio') {
-      if (audioUploading) {
-        showToast('Please wait for the audio upload to finish.');
-        return;
-      }
-      if (!audioUpload?.url) {
-        showToast('Upload an audio file first.');
-        return;
-      }
-      const newMsg: Message = {
-        id: `a-${Date.now()}`,
-        type: 'audio',
-        time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
-        createdAt: new Date().toISOString(),
-        audioUrl: audioUpload.url,
-        text: audioUpload.filename || audioFile?.name || 'Audio message',
-      };
-      setFeedMessages((prev) => [...prev, newMsg]);
-      queueScrollToBottom({ force: true });
-      showToast('Audio post published (mock).');
-      resetAudioSelection();
-    } else if (createTab === 'poll') {
-      const trimmedOptions = pollOptions.map((o) => o.trim()).filter(Boolean);
-      if (!pollQuestion.trim() || trimmedOptions.length < 2) return;
-      const newMsg: Message = {
-        id: `p-${Date.now()}`,
-        type: 'poll',
-        time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
-        createdAt: new Date().toISOString(),
-        pollQuestion: pollQuestion.trim(),
-        pollOptions: trimmedOptions.slice(0, 4),
-      };
-      setFeedMessages((prev) => [...prev, newMsg]);
-      queueScrollToBottom({ force: true });
-      showToast('Poll published (mock).');
-      setPollQuestion('');
-      setPollOptions(['', '']);
-    } else if (createTab === 'languages') {
-      const langs: I18nLang[] = ['en', 'es', 'fr', 'it'];
 
-      if (i18nMode === 'text') {
-        const trimmed = langs.map((l) => [l, i18nTexts[l].trim()] as const);
-        const english = trimmed.find(([l]) => l === 'en');
-        if (!english || !english[1]) {
-          showToast('Please provide English text.');
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      showToast('Supabase is not configured.');
+      return;
+    }
+    if (isSavingPost) return;
+
+    setIsSavingPost(true);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const authorId = sessionData?.session?.user?.id ?? null;
+    const timeLabel = formatShortTime();
+
+    try {
+      if (createTab === 'text') {
+        if (!createTextTitle.trim() && !createTextBody.trim()) return;
+        const body = createTextBody.trim() || createTextTitle.trim();
+        const { data, error } = await supabase
+          .from('posts')
+          .insert({
+            author_id: authorId,
+            type: 'text',
+            title: createTextTitle.trim() || null,
+            body_text: body,
+            visibility: 'public',
+            metadata: { time_label: timeLabel },
+          })
+          .select()
+          .single();
+        if (error) throw error;
+        const mapped = mapPostRowToMessage({ ...(data as PostRow), post_media: [], comments: [] }, adminUserIdRef.current);
+        setFeedMessages((prev) => [...prev, mapped]);
+        queueScrollToBottom({ force: true });
+        showToast('Text post published.');
+        setCreateTextTitle('');
+        setCreateTextBody('');
+      } else if (createTab === 'media') {
+        if (mediaFiles.length === 0) {
+          showToast('Add a photo or video first.');
           return;
         }
-        const items: I18nItem[] = trimmed
-          .filter(([, t]) => t.length > 0)
-          .map(([lang, text]) => ({ lang, text }));
-        const pack: I18nPack = { mode: 'text', items };
-        const newMsg: Message = {
-          id: `i18n-${Date.now()}`,
-          type: 'i18n',
-          time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
-          createdAt: new Date().toISOString(),
-          i18nPack: pack,
-        };
-        setFeedMessages((prev) => [...prev, newMsg]);
+
+        const uploads = await Promise.all(
+          mediaFiles.map((file) => uploadMedia(file, mediaIsVideo ? 'video' : 'image')),
+        );
+        const mediaUrls = uploads.map((u) => u.url);
+        const { data: postData, error: postError } = await supabase
+          .from('posts')
+          .insert({
+            author_id: authorId,
+            type: mediaIsVideo ? 'video' : 'photo',
+            body_text: mediaCaption.trim() || null,
+            visibility: 'public',
+            metadata: {
+              caption: mediaCaption.trim() || null,
+              image_urls: mediaIsVideo ? undefined : mediaUrls,
+              video_url: mediaIsVideo ? mediaUrls[0] : undefined,
+              time_label: timeLabel,
+            },
+          })
+          .select()
+          .single();
+        if (postError) throw postError;
+
+        let insertedMedia: PostMediaRow[] = [];
+        if (uploads.length) {
+          const mediaRows = uploads.map((u) => ({
+            post_id: (postData as PostRow).id,
+            storage_path: u.storagePath || u.url,
+            media_type: mediaIsVideo ? 'video' : 'image',
+            width: null,
+            height: null,
+            duration: null,
+          }));
+          const { data: mediaData, error: mediaError } = await supabase.from('post_media').insert(mediaRows).select();
+          if (mediaError) throw mediaError;
+          insertedMedia = (mediaData as PostMediaRow[]) || [];
+        }
+
+        const mapped = mapPostRowToMessage(
+          { ...(postData as PostRow), post_media: insertedMedia, comments: [] },
+          adminUserIdRef.current,
+        );
+        setFeedMessages((prev) => [...prev, mapped]);
         queueScrollToBottom({ force: true });
-        showToast('Multi-language post published!');
-        setI18nTexts({ en: '', es: '', fr: '', it: '' });
+        showToast(mediaIsVideo ? 'Video post published.' : `Photo post with ${uploads.length} image(s) published.`);
+        setMediaFiles([]);
+        setMediaPreviews([]);
+        setMediaCaption('');
+        setMediaIsVideo(false);
+      } else if (createTab === 'audio') {
+        if (audioUploading) {
+          showToast('Please wait for the audio upload to finish.');
+          return;
+        }
+        if (!audioUpload?.url) {
+          showToast('Upload an audio file first.');
+          return;
+        }
+        const { data, error } = await supabase
+          .from('posts')
+          .insert({
+            author_id: authorId,
+            type: 'audio',
+            body_text: audioUpload.filename || audioFile?.name || 'Audio message',
+            visibility: 'public',
+            metadata: {
+              audio_url: audioUpload.url,
+              time_label: timeLabel,
+            },
+          })
+          .select()
+          .single();
+        if (error) throw error;
+
+        const mapped = mapPostRowToMessage(
+          {
+            ...(data as PostRow),
+            post_media: [
+              {
+                id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
+                post_id: (data as PostRow).id,
+                storage_path: audioUpload.storagePath || audioUpload.url,
+                media_type: 'audio',
+              },
+            ],
+            comments: [],
+          },
+          adminUserIdRef.current,
+        );
+        setFeedMessages((prev) => [...prev, mapped]);
+        queueScrollToBottom({ force: true });
+        showToast('Audio post published.');
+        resetAudioSelection();
+      } else if (createTab === 'poll') {
+        const trimmedOptions = pollOptions.map((o) => o.trim()).filter(Boolean);
+        if (!pollQuestion.trim() || trimmedOptions.length < 2) return;
+        const { data, error } = await supabase
+          .from('posts')
+          .insert({
+            author_id: authorId,
+            type: 'poll',
+            body_text: pollQuestion.trim(),
+            visibility: 'public',
+            metadata: {
+              poll_question: pollQuestion.trim(),
+              poll_options: trimmedOptions.slice(0, 4),
+              time_label: timeLabel,
+            },
+          })
+          .select()
+          .single();
+        if (error) throw error;
+        const mapped = mapPostRowToMessage({ ...(data as PostRow), post_media: [], comments: [] }, adminUserIdRef.current);
+        setFeedMessages((prev) => [...prev, mapped]);
+        queueScrollToBottom({ force: true });
+        showToast('Poll published.');
+        setPollQuestion('');
+        setPollOptions(['', '']);
+      } else if (createTab === 'languages') {
+        const langs: I18nLang[] = ['en', 'es', 'fr', 'it'];
+
+        if (i18nMode === 'text') {
+          const trimmed = langs.map((l) => [l, i18nTexts[l].trim()] as const);
+          const english = trimmed.find(([l]) => l === 'en');
+          if (!english || !english[1]) {
+            showToast('Please provide English text.');
+            return;
+          }
+          const items: I18nItem[] = trimmed
+            .filter(([, t]) => t.length > 0)
+            .map(([lang, text]) => ({ lang, text }));
+          const pack: I18nPack = { mode: 'text', items };
+          const { data, error } = await supabase
+            .from('posts')
+            .insert({
+              author_id: authorId,
+              type: 'i18n',
+              body_text: 'i18n',
+              visibility: 'public',
+              metadata: { i18n_pack: pack, time_label: timeLabel },
+            })
+            .select()
+            .single();
+          if (error) throw error;
+          const mapped = mapPostRowToMessage({ ...(data as PostRow), post_media: [], comments: [] }, adminUserIdRef.current);
+          setFeedMessages((prev) => [...prev, mapped]);
+          queueScrollToBottom({ force: true });
+          showToast('Multi-language post published.');
+          setI18nTexts({ en: '', es: '', fr: '', it: '' });
+        } else {
+          const uploadsByLang: Record<I18nLang, string[]> = { en: [], es: [], fr: [], it: [] };
+          for (const lang of langs) {
+            const files = i18nFiles[lang] || [];
+            if (files.length === 0) continue;
+            const uploads = await Promise.all(files.map((file) => uploadMedia(file, 'image')));
+            uploadsByLang[lang] = uploads.map((u) => u.url);
+          }
+          const withImages = langs
+            .map((lang) => ({ lang, urls: uploadsByLang[lang] || [] }))
+            .filter(({ urls }) => urls.length > 0);
+          const hasEnglish = withImages.some(({ lang }) => lang === 'en');
+          if (!hasEnglish) {
+            showToast('Please upload at least English images.');
+            return;
+          }
+          const items: I18nItem[] = withImages.map(({ lang, urls }) => ({
+            lang,
+            imageUrl: urls[0],
+            imageUrls: [...urls],
+          }));
+          const pack: I18nPack = { mode: 'screenshot', items };
+          const { data, error } = await supabase
+            .from('posts')
+            .insert({
+              author_id: authorId,
+              type: 'i18n',
+              body_text: 'i18n',
+              visibility: 'public',
+              metadata: { i18n_pack: pack, time_label: timeLabel },
+            })
+            .select()
+            .single();
+          if (error) throw error;
+          const mapped = mapPostRowToMessage({ ...(data as PostRow), post_media: [], comments: [] }, adminUserIdRef.current);
+          setFeedMessages((prev) => [...prev, mapped]);
+          queueScrollToBottom({ force: true });
+          showToast('Multi-language post published.');
+          setI18nFiles({ en: [], es: [], fr: [], it: [] });
+          setI18nPreviews({ en: [], es: [], fr: [], it: [] });
+        }
       } else {
-        // Screenshot mode - require at least English, others optional
-        const withImages = langs
-          .map((lang) => ({ lang, urls: i18nPreviews[lang] || [] }))
-          .filter(({ urls }) => urls.length > 0);
-        const hasEnglish = withImages.some(({ lang }) => lang === 'en');
-        if (!hasEnglish) {
-          showToast('Please upload at least English images.');
-          return;
-        }
-        const items: I18nItem[] = withImages.map(({ lang, urls }) => ({
-          lang,
-          imageUrl: urls[0], // legacy single-image consumers
-          imageUrls: [...urls],
-        }));
-        const pack: I18nPack = { mode: 'screenshot', items };
-        const newMsg: Message = {
-          id: `i18n-${Date.now()}`,
-          type: 'i18n',
-          time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
-          createdAt: new Date().toISOString(),
-          i18nPack: pack,
-        };
-        setFeedMessages((prev) => [...prev, newMsg]);
-        queueScrollToBottom({ force: true });
-        showToast('Multi-language post published!');
-        setI18nFiles({ en: [], es: [], fr: [], it: [] });
-        setI18nPreviews({ en: [], es: [], fr: [], it: [] });
+        showToast('Saved.');
       }
-    } else {
-      showToast('Saved (mock).');
+    } catch (err) {
+      console.error('[data] Failed to save post', err);
+      showToast('Failed to save post. Please try again.');
+    } finally {
+      setIsSavingPost(false);
     }
   };
 
@@ -1093,6 +1547,54 @@ export default function HomePage() {
     setNewPhotoDayDates([]);
     setNewPhotoDayTimes([]);
     showToast(`${newPhotos.length} Photo(s) of the Day added (mock).`);
+  };
+
+  const handleSendComment = async () => {
+    if (!isAdmin || !activeMessageId) return;
+    const text = commentReply.trim();
+    if (!text) return;
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || postsSource === 'mock') {
+      setCommentsByPostId((prev) => {
+        const existing = prev[activeMessageId] ?? fakeComments;
+        return {
+          ...prev,
+          [activeMessageId]: [...existing, { id: `c-${Date.now()}`, author: 'Kareevsky', text }],
+        };
+      });
+      setCommentReply('');
+      showToast('Reply saved locally.');
+      return;
+    }
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id ?? null;
+      const { data, error } = await supabase
+        .from('comments')
+        .insert({
+          post_id: activeMessageId,
+          user_id: userId,
+          body_text: text,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      const mapped = mapCommentRow(data as CommentRow, adminUserIdRef.current);
+      setCommentsByPostId((prev) => {
+        const existing = prev[activeMessageId] ?? [];
+        return {
+          ...prev,
+          [activeMessageId]: [...existing, mapped],
+        };
+      });
+      setCommentReply('');
+      showToast('Reply published.');
+    } catch (err) {
+      console.error('[data] Failed to send comment', err);
+      showToast('Failed to send comment.');
+    }
   };
 
   const hasUnreadAdminMessage = adminMessages.some((m) => m.isUnread);
@@ -1598,7 +2100,7 @@ export default function HomePage() {
           {renderCreateContent()}
           <div className="write-view__footer" style={{ background: 'transparent', borderTop: 'none' }}>
             <button className="write-view__send" onClick={handleCreateSave}>
-              Save (mock)
+              Save
             </button>
           </div>
         </div>
@@ -2335,19 +2837,7 @@ export default function HomePage() {
                     <button
                       className="write-view__send"
                       style={{ width: 'auto', padding: '8px 14px' }}
-                      onClick={() => {
-                        if (!isAdmin || !activeMessageId) return;
-                        const text = commentReply.trim();
-                        if (!text) return;
-                        setCommentsByPostId((prev) => {
-                          const existing = prev[activeMessageId] ?? fakeComments;
-                          return {
-                            ...prev,
-                            [activeMessageId]: [...existing, { id: `c-${Date.now()}`, author: 'Kareevsky', text }],
-                          };
-                        });
-                        setCommentReply('');
-                      }}
+                      onClick={handleSendComment}
                     >
                       Send
                     </button>
