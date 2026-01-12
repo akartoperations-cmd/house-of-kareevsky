@@ -807,7 +807,11 @@ export default function HomePage() {
   const forceScrollToBottom = useRef(false);
   const bodyOverflowRef = useRef<string | null>(null);
   const didInitialScroll = useRef(false);
-  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+  const userHasScrolledUpRef = useRef(false);
+  const isAtBottomRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
+  const [userHasScrolledUp, setUserHasScrolledUp] = useState(false);
+  const [isAtBottom, setIsAtBottom] = useState(true);
   const postsRequestIdRef = useRef(0);
   const loadingPostsRef = useRef(false);
   const isMountedRef = useRef(true);
@@ -815,7 +819,6 @@ export default function HomePage() {
   const scrollElementRef = useRef<HTMLElement | null>(null);
   const feedScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollDistanceRafRef = useRef<number | null>(null);
-  const isNearBottomRef = useRef(true);
   const photoViewerContainerRef = useRef<HTMLDivElement | null>(null);
   const photoSwipeStart = useRef<{ x: number; y: number } | null>(null);
   const [isPortrait, setIsPortrait] = useState(true);
@@ -826,9 +829,7 @@ export default function HomePage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [viewerViewport, setViewerViewport] = useState({ width: 0, height: 0 });
   const isPhotoOpen = Boolean(photoViewer);
-  const [showLatestButton, setShowLatestButton] = useState(false);
-  const NEAR_BOTTOM_DISTANCE_PX = 120;
-  const LATEST_BUTTON_DISTANCE_PX = 600;
+  const BOTTOM_EPSILON_PX = 4;
 
   const getScreenOrientation = () =>
     typeof window === 'undefined'
@@ -857,7 +858,7 @@ export default function HomePage() {
 
   const getScrollTarget = useCallback(() => scrollElementRef.current || resolveScrollContainer(), [resolveScrollContainer]);
 
-  const scheduleDistanceCheck = useCallback(() => {
+  const scheduleScrollStateCheck = useCallback(() => {
     if (typeof window === 'undefined') return;
 
     if (scrollDistanceRafRef.current !== null) {
@@ -870,14 +871,29 @@ export default function HomePage() {
       const target = getScrollTarget();
       if (!target) return;
 
-      const distance = target.scrollHeight - (target.scrollTop + target.clientHeight);
-      const nearBottom = distance < NEAR_BOTTOM_DISTANCE_PX;
+      const scrollTop = target.scrollTop;
+      const maxScrollTop = Math.max(target.scrollHeight - target.clientHeight, 0);
+      const distanceToBottom = maxScrollTop - scrollTop;
+      const atBottom = distanceToBottom <= BOTTOM_EPSILON_PX;
 
-      isNearBottomRef.current = nearBottom;
-      setAutoScrollEnabled(nearBottom);
-      setShowLatestButton(distance > LATEST_BUTTON_DISTANCE_PX);
+      setIsAtBottom(atBottom);
+      isAtBottomRef.current = atBottom;
+
+      if (atBottom) {
+        if (userHasScrolledUpRef.current) {
+          userHasScrolledUpRef.current = false;
+          setUserHasScrolledUp(false);
+        }
+      } else if (scrollTop < lastScrollTopRef.current - 0.5) {
+        if (!userHasScrolledUpRef.current) {
+          userHasScrolledUpRef.current = true;
+          setUserHasScrolledUp(true);
+        }
+      }
+
+      lastScrollTopRef.current = scrollTop;
     });
-  }, [getScrollTarget, LATEST_BUTTON_DISTANCE_PX, NEAR_BOTTOM_DISTANCE_PX]);
+  }, [BOTTOM_EPSILON_PX, getScrollTarget]);
 
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto') => {
@@ -885,22 +901,19 @@ export default function HomePage() {
       if (!target) return;
 
       target.scrollTo({ top: target.scrollHeight, behavior });
-      isNearBottomRef.current = true;
-      setAutoScrollEnabled(true);
-      setShowLatestButton(false);
+      isAtBottomRef.current = true;
+      setIsAtBottom(true);
+      if (userHasScrolledUpRef.current) {
+        userHasScrolledUpRef.current = false;
+        setUserHasScrolledUp(false);
+      }
+      lastScrollTopRef.current = target.scrollTop;
     },
     [getScrollTarget],
   );
 
   const scrollToBottomImmediate = useCallback(() => {
     scrollToBottom('auto');
-  }, [scrollToBottom]);
-
-  const scrollToBottomSmooth = useCallback(() => {
-    scrollToBottom('smooth');
-    if (process.env.NODE_ENV !== 'production') {
-      console.debug('[feed] jump to latest');
-    }
   }, [scrollToBottom]);
 
   const session = access.session;
@@ -940,6 +953,8 @@ export default function HomePage() {
     });
     return items;
   }, [filteredMessages]);
+
+  const showLatestButton = userHasScrolledUp && !isAtBottom;
 
   const showToast = useCallback((text: string, timeoutMs = 2500) => {
     setToastMessage(text);
@@ -1290,7 +1305,7 @@ export default function HomePage() {
     let removeScrollListener: (() => void) | null = null;
 
     const attachScrollListener = (target: HTMLElement) => {
-      const handleScroll = () => scheduleDistanceCheck();
+      const handleScroll = () => scheduleScrollStateCheck();
       const scrollTarget: HTMLElement | Window =
         typeof document !== 'undefined' && target === document.documentElement ? window : target;
       scrollTarget.addEventListener('scroll', handleScroll, { passive: true });
@@ -1310,9 +1325,10 @@ export default function HomePage() {
           console.debug('[feed] scroll container', label);
         }
         removeScrollListener = attachScrollListener(nextTarget);
+        lastScrollTopRef.current = nextTarget.scrollTop;
       }
 
-      scheduleDistanceCheck();
+      scheduleScrollStateCheck();
     };
 
     updateScrollContainer();
@@ -1328,7 +1344,7 @@ export default function HomePage() {
         scrollDistanceRafRef.current = null;
       }
     };
-  }, [resolveScrollContainer, scheduleDistanceCheck, feedItems.length, activeView]);
+  }, [resolveScrollContainer, scheduleScrollStateCheck, feedItems.length, activeView]);
 
   useEffect(() => {
     evaluateRotateHint();
@@ -1349,11 +1365,19 @@ export default function HomePage() {
   );
 
   useEffect(() => {
-    if (activeView === 'home' && isNearBottomRef.current) {
-      // When entering the feed, request scroll to the latest post unless the user had scrolled up
-      queueScrollToBottom();
+    if (activeView === 'home') {
+      userHasScrolledUpRef.current = false;
+      setUserHasScrolledUp(false);
+      queueScrollToBottom({ force: true });
     }
   }, [activeView, queueScrollToBottom]);
+
+  useEffect(() => {
+    if (activeView !== 'home') return;
+    if (!userHasScrolledUpRef.current) {
+      queueScrollToBottom();
+    }
+  }, [activeView, feedItems.length, queueScrollToBottom]);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -1380,16 +1404,24 @@ export default function HomePage() {
       didInitialScroll.current = true;
       pendingScrollToBottom.current = false;
       forceScrollToBottom.current = false;
-      requestAnimationFrame(() => requestAnimationFrame(scrollToBottomImmediate));
+      requestAnimationFrame(() => {
+        scrollToBottomImmediate();
+        scheduleScrollStateCheck();
+      });
       return;
     }
 
-    if (pendingScrollToBottom.current && (autoScrollEnabled || forceScrollToBottom.current)) {
-      pendingScrollToBottom.current = false;
+    if (!pendingScrollToBottom.current) return;
+    if (userHasScrolledUpRef.current && !forceScrollToBottom.current) return;
+
+    pendingScrollToBottom.current = false;
+    const performScroll = () => {
+      scrollToBottomImmediate();
       forceScrollToBottom.current = false;
-      requestAnimationFrame(scrollToBottomImmediate);
-    }
-  }, [activeView, feedItems.length, autoScrollEnabled, scrollToBottomImmediate]);
+      scheduleScrollStateCheck();
+    };
+    requestAnimationFrame(performScroll);
+  }, [activeView, feedItems.length, scheduleScrollStateCheck, scrollToBottomImmediate]);
 
   const goToPrevPhoto = useCallback(() => {
     if (currentPhotoIndex > 0) {
@@ -3097,7 +3129,7 @@ export default function HomePage() {
                 className="latest-btn"
                 onClick={(e) => {
                   e.stopPropagation();
-                  scrollToBottomSmooth();
+                  scrollToBottomImmediate();
                 }}
                 aria-label="Jump to latest post"
               >
