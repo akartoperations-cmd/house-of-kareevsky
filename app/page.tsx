@@ -647,10 +647,8 @@ const Icons = {
   ),
   refresh: (
     <svg className="icon" viewBox="0 0 24 24">
-      <polyline points="3 4 3 10 9 10" />
-      <polyline points="21 20 21 14 15 14" />
-      <path d="M21 8a9 9 0 0 0-17.29-3" />
-      <path d="M3 16a9 9 0 0 0 17.29 3" />
+      <path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c3.2 0 6.05-1.63 7.68-4.11" />
+      <path d="M21 6v6h-6" />
     </svg>
   ),
   play: (
