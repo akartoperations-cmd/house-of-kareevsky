@@ -405,6 +405,13 @@ const normalizeStoragePath = (value?: string | null) => {
   return withoutBucket.replace(/^\/+/, '');
 };
 
+const buildPublicStorageUrl = (path: string | null | undefined) => {
+  if (!path) return null;
+  const base = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/+$/, '');
+  if (!base) return null;
+  return `${base}/storage/v1/object/public/${MEDIA_BUCKET}/${path.replace(/^\/+/, '')}`;
+};
+
 const guessAudioMimeType = (value?: string | null) => {
   if (!value) return undefined;
   const clean = (value.split('?')[0] || '').toLowerCase();
@@ -483,6 +490,10 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
         if (!nextUrl) {
           const { data: publicData } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(normalizedPath);
           nextUrl = publicData?.publicUrl || null;
+        }
+
+        if (!nextUrl) {
+          nextUrl = buildPublicStorageUrl(normalizedPath);
         }
 
         if (!nextUrl) {
