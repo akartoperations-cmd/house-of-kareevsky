@@ -21,6 +21,7 @@ import { AuthBar } from './components/AuthBar';
 import { getSupabaseBrowserClient } from './lib/supabaseClient';
 import {
   DEFAULT_BUCKET as MEDIA_BUCKET,
+  SIGNED_URL_TTL_SECONDS,
   resolvePathsToSignedUrls,
   uploadMedia,
   type MediaKind,
@@ -332,6 +333,8 @@ const mapPostRowToMessage = (row: PostRow, adminUserId?: string | null): Message
     audioMedia?.url ||
     audioMedia?.storage_path ||
     (meta.audio_url as string | undefined);
+  const audioStoragePath =
+    audioMedia?.storage_path || (audioUrl && !isHttpUrl(audioUrl) ? audioUrl : undefined);
   const bodyText = row.body_text || row.title || (meta.text as string | undefined) || '';
 
   const message: Message = {
@@ -356,6 +359,7 @@ const mapPostRowToMessage = (row: PostRow, adminUserId?: string | null): Message
   }
   if (messageType === 'audio') {
     message.audioUrl = audioUrl;
+    message.audioStoragePath = audioStoragePath || undefined;
   }
 
   // Posts authored by the configured admin get an admin flag for downstream UI if needed.
@@ -386,6 +390,166 @@ const mapDirectMessageRow = (row: DirectMessageRow, adminUserId?: string | null)
     text: row.body_text || '',
   };
 };
+
+const isHttpUrl = (value?: string | null) => Boolean(value && /^https?:\/\//i.test(value));
+
+const normalizeStoragePath = (value?: string | null) => {
+  if (!value) return null;
+  const withoutProtocol = value.replace(
+    /^https?:\/\/[^/]+\/storage\/v1\/object\/(?:sign|public)\/[^/]+\//i,
+    '',
+  );
+  const withoutBucket = withoutProtocol.startsWith(`${MEDIA_BUCKET}/`)
+    ? withoutProtocol.slice(MEDIA_BUCKET.length + 1)
+    : withoutProtocol;
+  return withoutBucket.replace(/^\/+/, '');
+};
+
+const guessAudioMimeType = (value?: string | null) => {
+  if (!value) return undefined;
+  const clean = (value.split('?')[0] || '').toLowerCase();
+  if (clean.endsWith('.mp3')) return 'audio/mpeg';
+  if (clean.endsWith('.m4a') || clean.endsWith('.mp4') || clean.endsWith('.aac')) return 'audio/mp4';
+  if (clean.endsWith('.wav')) return 'audio/wav';
+  if (clean.endsWith('.ogg') || clean.endsWith('.oga')) return 'audio/ogg';
+  if (clean.endsWith('.webm')) return 'audio/webm';
+  return undefined;
+};
+
+type AudioPostPlayerProps = {
+  audioUrl?: string | null;
+  storagePath?: string | null;
+  isReader: boolean;
+};
+
+function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerProps) {
+  const [resolvedSrc, setResolvedSrc] = useState<string | null>(null);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const preferred = audioUrl || storagePath;
+
+    const setErrorState = (message: string) => {
+      if (cancelled) return;
+      setResolvedSrc(null);
+      setStatus('error');
+      setErrorMessage(message);
+    };
+
+    setResolvedSrc(null);
+    setStatus('loading');
+    setErrorMessage(null);
+
+    if (!preferred) {
+      setErrorState('Audio file is not available');
+      return;
+    }
+
+    if (isHttpUrl(preferred)) {
+      if (cancelled) return;
+      setResolvedSrc(preferred);
+      setStatus('ready');
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      setErrorState('Audio failed to load');
+      return;
+    }
+
+    const normalizedPath = normalizeStoragePath(storagePath || audioUrl);
+    if (!normalizedPath) {
+      setErrorState('Audio file is not available');
+      return;
+    }
+
+    (async () => {
+      try {
+        const { data, error } = await supabase.storage
+          .from(MEDIA_BUCKET)
+          .createSignedUrl(normalizedPath, SIGNED_URL_TTL_SECONDS);
+        let nextUrl = data?.signedUrl || null;
+
+        if (error && process.env.NODE_ENV !== 'production') {
+          console.warn('[audio] createSignedUrl fallback to public URL', {
+            path: normalizedPath,
+            message: error.message,
+          });
+        }
+
+        if (!nextUrl) {
+          const { data: publicData } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(normalizedPath);
+          nextUrl = publicData?.publicUrl || null;
+        }
+
+        if (!nextUrl) {
+          throw new Error('No signed or public URL returned');
+        }
+
+        if (!cancelled) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.debug('[audio] Resolved playback URL', { path: normalizedPath });
+          }
+          setResolvedSrc(nextUrl);
+          setStatus('ready');
+        }
+      } catch (err) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.error('[audio] Failed to resolve audio URL', err);
+        }
+        setErrorState('Audio failed to load');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [audioUrl, storagePath]);
+
+  const mimeType = useMemo(
+    () => guessAudioMimeType(resolvedSrc || audioUrl || storagePath),
+    [resolvedSrc, audioUrl, storagePath],
+  );
+
+  if (status === 'error') {
+    return (
+      <div className="message__caption" style={{ padding: '8px 0' }}>
+        {errorMessage || 'Audio failed to load'}
+      </div>
+    );
+  }
+
+  if (!resolvedSrc || status === 'loading') {
+    return (
+      <div className="message__caption" style={{ padding: '8px 0' }}>
+        Loading audio…
+      </div>
+    );
+  }
+
+  return (
+    <audio
+      key={resolvedSrc}
+      controls
+      controlsList={isReader ? 'nodownload' : undefined}
+      preload="metadata"
+      playsInline
+      style={{ width: '100%', maxWidth: '320px' }}
+      onLoadedData={() => setStatus('ready')}
+      onCanPlay={() => setStatus('ready')}
+      onError={() => {
+        setStatus('error');
+        setErrorMessage('Audio failed to load');
+      }}
+    >
+      <source src={resolvedSrc} type={mimeType} />
+      Your browser does not support the audio element.
+    </audio>
+  );
+}
 
 const Icons = {
   menu: (
@@ -619,6 +783,7 @@ export default function HomePage() {
   const [postsSource, setPostsSource] = useState<'supabase' | 'mock' | 'uninitialized'>('uninitialized');
   const [loadingPosts, setLoadingPosts] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
+  const [actionLock, setActionLock] = useState(false);
   const [isSavingPost, setIsSavingPost] = useState(false);
   const [galleryTab, setGalleryTab] = useState<GalleryTab>('photoOfDay');
   const [installPromptEvent, setInstallPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
@@ -635,7 +800,10 @@ export default function HomePage() {
   const postsRequestIdRef = useRef(0);
   const loadingPostsRef = useRef(false);
   const isMountedRef = useRef(true);
+  const actionLockTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollElementRef = useRef<HTMLElement | null>(null);
+  const feedScrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const scrollDistanceRafRef = useRef<number | null>(null);
   const isNearBottomRef = useRef(true);
   const photoViewerContainerRef = useRef<HTMLDivElement | null>(null);
   const photoSwipeStart = useRef<{ x: number; y: number } | null>(null);
@@ -647,6 +815,9 @@ export default function HomePage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [viewerViewport, setViewerViewport] = useState({ width: 0, height: 0 });
   const isPhotoOpen = Boolean(photoViewer);
+  const [showLatestButton, setShowLatestButton] = useState(false);
+  const NEAR_BOTTOM_DISTANCE_PX = 120;
+  const LATEST_BUTTON_DISTANCE_PX = 600;
 
   const getScreenOrientation = () =>
     typeof window === 'undefined'
@@ -655,6 +826,71 @@ export default function HomePage() {
           lock?: (orientation: string) => Promise<void>;
           unlock?: () => void;
         });
+
+  const getDocumentScrollElement = useCallback(() => {
+    if (typeof document === 'undefined') return null;
+    return (document.scrollingElement as HTMLElement | null) || document.documentElement;
+  }, []);
+
+  const resolveScrollContainer = useCallback(() => {
+    const docTarget = getDocumentScrollElement();
+    const feedEl = feedScrollContainerRef.current;
+
+    if (feedEl) {
+      const canScrollFeed = feedEl.scrollHeight - feedEl.clientHeight > 16;
+      if (canScrollFeed) return feedEl;
+    }
+
+    return docTarget;
+  }, [getDocumentScrollElement]);
+
+  const getScrollTarget = useCallback(() => scrollElementRef.current || resolveScrollContainer(), [resolveScrollContainer]);
+
+  const scheduleDistanceCheck = useCallback(() => {
+    if (typeof window === 'undefined') return;
+
+    if (scrollDistanceRafRef.current !== null) {
+      cancelAnimationFrame(scrollDistanceRafRef.current);
+    }
+
+    scrollDistanceRafRef.current = window.requestAnimationFrame(() => {
+      scrollDistanceRafRef.current = null;
+
+      const target = getScrollTarget();
+      if (!target) return;
+
+      const distance = target.scrollHeight - (target.scrollTop + target.clientHeight);
+      const nearBottom = distance < NEAR_BOTTOM_DISTANCE_PX;
+
+      isNearBottomRef.current = nearBottom;
+      setAutoScrollEnabled(nearBottom);
+      setShowLatestButton(distance > LATEST_BUTTON_DISTANCE_PX);
+    });
+  }, [getScrollTarget, LATEST_BUTTON_DISTANCE_PX, NEAR_BOTTOM_DISTANCE_PX]);
+
+  const scrollToBottom = useCallback(
+    (behavior: ScrollBehavior = 'auto') => {
+      const target = getScrollTarget();
+      if (!target) return;
+
+      target.scrollTo({ top: target.scrollHeight, behavior });
+      isNearBottomRef.current = true;
+      setAutoScrollEnabled(true);
+      setShowLatestButton(false);
+    },
+    [getScrollTarget],
+  );
+
+  const scrollToBottomImmediate = useCallback(() => {
+    scrollToBottom('auto');
+  }, [scrollToBottom]);
+
+  const scrollToBottomSmooth = useCallback(() => {
+    scrollToBottom('smooth');
+    if (process.env.NODE_ENV !== 'production') {
+      console.debug('[feed] jump to latest');
+    }
+  }, [scrollToBottom]);
 
   const session = access.session;
   const user = session?.user;
@@ -699,8 +935,22 @@ export default function HomePage() {
     setTimeout(() => setToastMessage(null), timeoutMs);
   }, []);
 
+  const startActionLock = useCallback((duration = 500) => {
+    if (actionLockTimeoutRef.current) {
+      clearTimeout(actionLockTimeoutRef.current);
+    }
+    setActionLock(true);
+    actionLockTimeoutRef.current = setTimeout(() => {
+      setActionLock(false);
+      actionLockTimeoutRef.current = null;
+    }, duration);
+  }, []);
+
   useEffect(
     () => () => {
+      if (actionLockTimeoutRef.current) {
+        clearTimeout(actionLockTimeoutRef.current);
+      }
       isMountedRef.current = false;
     },
     [],
@@ -726,9 +976,6 @@ export default function HomePage() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-
-    scrollElementRef.current =
-      (document.scrollingElement as HTMLElement | null) || document.documentElement;
 
     const dismissed = window.localStorage.getItem('install-banner-dismissed') === '1';
     setInstallBannerDismissed(dismissed);
@@ -1027,36 +1274,58 @@ export default function HomePage() {
   }, [currentImageAspect, isPortrait, rotateHintDismissed]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    let removeScrollListener: (() => void) | null = null;
+
+    const attachScrollListener = (target: HTMLElement) => {
+      const handleScroll = () => scheduleDistanceCheck();
+      const scrollTarget: HTMLElement | Window =
+        typeof document !== 'undefined' && target === document.documentElement ? window : target;
+      scrollTarget.addEventListener('scroll', handleScroll, { passive: true });
+      return () => scrollTarget.removeEventListener('scroll', handleScroll);
+    };
+
+    const updateScrollContainer = () => {
+      const nextTarget = resolveScrollContainer();
+      if (!nextTarget) return;
+
+      if (scrollElementRef.current !== nextTarget) {
+        removeScrollListener?.();
+        scrollElementRef.current = nextTarget;
+        if (process.env.NODE_ENV !== 'production') {
+          const label =
+            nextTarget === document.documentElement ? 'document' : nextTarget.tagName || 'element';
+          console.debug('[feed] scroll container', label);
+        }
+        removeScrollListener = attachScrollListener(nextTarget);
+      }
+
+      scheduleDistanceCheck();
+    };
+
+    updateScrollContainer();
+
+    const handleResize = () => updateScrollContainer();
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      removeScrollListener?.();
+      window.removeEventListener('resize', handleResize);
+      if (scrollDistanceRafRef.current !== null) {
+        cancelAnimationFrame(scrollDistanceRafRef.current);
+        scrollDistanceRafRef.current = null;
+      }
+    };
+  }, [resolveScrollContainer, scheduleDistanceCheck, feedItems.length, activeView]);
+
+  useEffect(() => {
     evaluateRotateHint();
   }, [evaluateRotateHint]);
 
   useEffect(() => {
     setCurrentImageAspect(null);
   }, [photoViewer?.index, photoViewer?.images]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const handleScroll = () => {
-      const target = scrollElementRef.current || document.scrollingElement || document.documentElement;
-      if (!target) return;
-      const distance = target.scrollHeight - (target.scrollTop + target.clientHeight);
-      const nearBottom = distance < 120;
-      isNearBottomRef.current = nearBottom;
-      // Auto-scroll only when the user is near the bottom; scrolling up disables it until they return
-      setAutoScrollEnabled(nearBottom);
-    };
-    handleScroll();
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
-  const scrollToBottomImmediate = useCallback(() => {
-    const target = scrollElementRef.current || document.scrollingElement || document.documentElement;
-    if (!target) return;
-    target.scrollTo({ top: target.scrollHeight, behavior: 'auto' });
-    isNearBottomRef.current = true;
-    setAutoScrollEnabled(true);
-  }, []);
 
   const queueScrollToBottom = useCallback(
     (options?: { force?: boolean }) => {
@@ -1140,6 +1409,8 @@ export default function HomePage() {
   };
 
   const openPhotoOfDay = (photo: Photo) => {
+    if (actionLock) return;
+    startActionLock();
     openPhotoViewer([photo.url], {
       description: photo.description,
       date: photo.date,
@@ -1274,6 +1545,7 @@ export default function HomePage() {
   };
 
   const handleFreeAreaClick = (e: React.MouseEvent) => {
+    if (actionLock) return;
     // Click catcher for the visible photo-of-the-day background.
     // If the click started on any interactive element or message bubble, do nothing.
     const target = e.target as HTMLElement;
@@ -1283,6 +1555,7 @@ export default function HomePage() {
       target.closest('.emoji-panel') ||
       target.closest('.photo-header') ||
       target.closest('.menu-btn') ||
+      target.closest('.refresh-btn') ||
       target.closest('.notification-banner') ||
       target.closest('.bottom-sheet') ||
       target.closest('.modal') ||
@@ -1325,8 +1598,10 @@ export default function HomePage() {
   const closeMenu = () => setMenuOpen(false);
 
   const handleManualRefresh = useCallback(() => {
+    if (actionLock || loadingPostsRef.current) return;
+    startActionLock();
     refreshFeed('manual');
-  }, [refreshFeed]);
+  }, [actionLock, refreshFeed, startActionLock]);
 
   const dismissInstallBanner = useCallback(() => {
     setShowInstallBanner(false);
@@ -2780,7 +3055,7 @@ export default function HomePage() {
             </div>
 
             {/* Feed without date dividers - date shown in each message's meta */}
-            <div className="feed feed--overlay">
+            <div className="feed feed--overlay" ref={feedScrollContainerRef}>
               {feedItems.map((item) => {
                 // Skip date dividers - date is now shown in message__meta
                 if (item.type === 'date') return null;
@@ -2805,6 +3080,20 @@ export default function HomePage() {
               })}
             </div>
 
+            {showLatestButton && (
+              <button
+                type="button"
+                className="latest-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  scrollToBottomSmooth();
+                }}
+                aria-label="Jump to latest post"
+              >
+                ↓ Latest
+              </button>
+            )}
+
             {hasUnreadAdminMessage && (
               <button className="notification-banner" onClick={openArtistMessage}>
                 <span>New letter from Kareevsky</span>
@@ -2815,7 +3104,10 @@ export default function HomePage() {
             <button
               type="button"
               className={`refresh-btn ${loadingPosts ? 'refresh-btn--loading' : ''}`}
-              onClick={handleManualRefresh}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleManualRefresh();
+              }}
               aria-label="Refresh feed"
               disabled={loadingPosts}
             >
@@ -3706,8 +3998,6 @@ function MessageBubble({
   }
 
   if (message.type === 'audio') {
-    const hasAudio = Boolean(message.audioUrl && /^https?:\/\//.test(message.audioUrl));
-
     return (
       <div className="message">
         <div
@@ -3715,19 +4005,11 @@ function MessageBubble({
           style={{ width: 'auto', maxWidth: '100%' }}
           onContextMenu={handleContentContextMenu}
         >
-          {hasAudio ? (
-            <audio
-              src={message.audioUrl}
-              controls
-              controlsList={isReader ? 'nodownload' : undefined}
-              preload="metadata"
-              style={{ width: '100%', maxWidth: '280px' }}
-            />
-          ) : (
-            <div className="message__caption" style={{ padding: '8px 0' }}>
-              Audio file is not available
-            </div>
-          )}
+          <AudioPostPlayer
+            audioUrl={message.audioUrl}
+            storagePath={message.audioStoragePath}
+            isReader={isReader}
+          />
           <div className="message__meta message__meta--photo">
             {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
           </div>

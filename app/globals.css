@@ -1443,6 +1443,14 @@ button:focus {
   backdrop-filter: blur(6px);
   z-index: 109;
   transition: transform 0.2s, background 0.2s, opacity 0.2s;
+  touch-action: manipulation;
+  pointer-events: auto;
+}
+
+.refresh-btn::after {
+  content: '';
+  position: absolute;
+  inset: -2px -6px -8px -6px;
 }
 
 .refresh-btn:hover {
@@ -1466,6 +1474,42 @@ button:focus {
 
 .refresh-btn--loading {
   cursor: wait;
+}
+
+.latest-btn {
+  position: fixed;
+  right: 12px;
+  bottom: 96px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.45);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+  z-index: 108;
+  transition: transform 0.18s ease, background 0.18s ease, opacity 0.18s ease;
+  touch-action: manipulation;
+}
+
+.latest-btn:hover {
+  transform: translateY(-2px) scale(1.01);
+  background: rgba(0, 0, 0, 0.52);
+}
+
+.latest-btn:active {
+  transform: translateY(0);
+}
+
+@media (min-width: 520px) {
+  .latest-btn {
+    right: 20px;
+    bottom: 104px;
+  }
 }
 
 .refresh-indicator {

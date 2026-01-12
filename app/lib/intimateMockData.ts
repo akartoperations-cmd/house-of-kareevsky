@@ -35,6 +35,7 @@ export interface Message {
   images?: string[];
   videoUrl?: string;
   audioUrl?: string;
+  audioStoragePath?: string;
   text?: string;
   subtitle?: string; // For sticker messages
   caption?: string; // For photo posts
