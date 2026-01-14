@@ -374,6 +374,8 @@ const mapPostRowToMessage = (row: PostRow, adminUserId?: string | null): Message
     type: messageType,
     time: (meta.time_label as string | undefined) || formatShortTime(row.created_at || undefined),
     createdAt: row.created_at || undefined,
+    updatedAt: row.updated_at || undefined,
+    authorId: row.author_id || null,
     text: bodyText,
     caption,
     subtitle,
@@ -418,6 +420,9 @@ const mapCommentRow = (row: CommentRow, adminUserId?: string | null): Comment =>
     id: row.id,
     author: isAdminAuthor ? 'Kareevsky' : 'Member',
     text: row.body_text || '',
+    userId: row.user_id || null,
+    postId: row.post_id || null,
+    updatedAt: row.updated_at || null,
   };
 };
 
@@ -430,6 +435,9 @@ const mapDirectMessageRow = (row: DirectMessageRow, adminUserId?: string | null)
     createdAt: row.created_at || undefined,
     date: formatShortDate(row.created_at || undefined),
     text: row.body_text || '',
+    fromUserId: row.from_user_id || null,
+    toAdminId: row.to_admin_id || null,
+    updatedAt: row.updated_at || null,
   };
 };
 
@@ -488,6 +496,9 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
     const tryResolve = async () => {
       // If already an http URL, use directly
       if (audioUrl && isHttpUrl(audioUrl)) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('[AudioPostPlayer] Using direct URL:', audioUrl);
+        }
         setResolvedSrc(audioUrl);
         setStatus('ready');
         return;
@@ -506,17 +517,23 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
           const { data, error } = await supabase.storage.from(MEDIA_BUCKET).createSignedUrl(normalizedPath, 3600);
           if (data?.signedUrl) {
             if (!cancelled) {
+              if (process.env.NODE_ENV !== 'production') {
+                console.log('[AudioPostPlayer] Signed URL resolved:', data.signedUrl.slice(0, 80) + '...');
+              }
               setResolvedSrc(data.signedUrl);
               setStatus('ready');
             }
             return;
           }
           if (error && process.env.NODE_ENV !== 'production') {
-            console.warn('[audio] Signed URL error', error.message);
+            console.warn('[AudioPostPlayer] Signed URL error:', error.message);
           }
           const { data: pubData } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(normalizedPath);
           if (pubData?.publicUrl) {
             if (!cancelled) {
+              if (process.env.NODE_ENV !== 'production') {
+                console.log('[AudioPostPlayer] Public URL resolved:', pubData.publicUrl);
+              }
               setResolvedSrc(pubData.publicUrl);
               setStatus('ready');
             }
@@ -524,7 +541,7 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
           }
         } catch (err) {
           if (process.env.NODE_ENV !== 'production') {
-            console.error('[audio] Supabase error', err);
+            console.error('[AudioPostPlayer] Supabase error:', err);
           }
         }
       }
@@ -532,6 +549,9 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
       const manual = buildPublicStorageUrl(normalizedPath);
       if (manual) {
         if (!cancelled) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.log('[AudioPostPlayer] Manual URL fallback:', manual);
+          }
           setResolvedSrc(manual);
           setStatus('ready');
         }
@@ -558,15 +578,23 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
     buildPublicStorageUrl(normalizeStoragePath(storagePath || audioUrl)) ||
     '';
 
+  // Dev log: confirm audio element mounting
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[AudioPostPlayer] Mounted with src:', playbackSrc || '(empty)', '| status:', status);
+    }
+  }, [playbackSrc, status]);
+
+  // Always render audio element with controls - never hide it
   return (
-    <div style={{ width: '100%', maxWidth: '320px', minHeight: '56px' }}>
+    <div style={{ width: '100%' }}>
       <audio
-        key={playbackSrc || 'audio-empty'}
+        key={playbackSrc || 'audio-fallback'}
         controls
-        preload="metadata"
+        preload="none"
         playsInline
         controlsList={isReader ? 'nodownload' : undefined}
-        style={{ width: '100%', display: 'block' }}
+        style={{ width: '100%', display: 'block', minHeight: '40px' }}
         src={playbackSrc || undefined}
         onLoadedMetadata={() => setStatus('ready')}
         onPlay={() => setStatus('ready')}
@@ -575,14 +603,14 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
           setErrorMessage('Audio failed to play');
         }}
       >
-        {playbackSrc ? <source src={playbackSrc} type={mimeType} /> : null}
+        {playbackSrc && <source src={playbackSrc} type={mimeType} />}
         Your browser does not support audio.
       </audio>
       {status === 'loading' && (
-        <div style={{ padding: '6px 0', color: 'rgba(0,0,0,0.6)', fontSize: '13px' }}>Loading audio…</div>
+        <div style={{ padding: '4px 0', color: 'rgba(0,0,0,0.5)', fontSize: '12px' }}>Loading…</div>
       )}
       {status === 'error' && (
-        <div style={{ padding: '6px 0', color: '#c44', fontSize: '13px' }}>{errorMessage || 'Audio failed to load'}</div>
+        <div style={{ padding: '4px 0', color: '#c44', fontSize: '12px' }}>{errorMessage || 'Audio error'}</div>
       )}
     </div>
   );
@@ -774,6 +802,18 @@ export default function HomePage() {
   const [personalMessages, setPersonalMessages] = useState<PersonalMessage[]>([]);
   const [commentsByPostId, setCommentsByPostId] = useState<Record<string, Comment[]>>({});
   const [commentReply, setCommentReply] = useState('');
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [commentSavingId, setCommentSavingId] = useState<string | null>(null);
+  const [commentDeletingId, setCommentDeletingId] = useState<string | null>(null);
+  const [editingPostId, setEditingPostId] = useState<string | null>(null);
+  const [postDrafts, setPostDrafts] = useState<Record<string, string>>({});
+  const [postSavingId, setPostSavingId] = useState<string | null>(null);
+  const [postDeletingId, setPostDeletingId] = useState<string | null>(null);
+  const [editingDmId, setEditingDmId] = useState<string | null>(null);
+  const [dmDrafts, setDmDrafts] = useState<Record<string, string>>({});
+  const [dmSavingId, setDmSavingId] = useState<string | null>(null);
+  const [dmDeletingId, setDmDeletingId] = useState<string | null>(null);
   const [createTab, setCreateTab] = useState<'text' | 'media' | 'audio' | 'poll' | 'languages'>('text');
   const [createTextTitle, setCreateTextTitle] = useState('');
   const [createTextBody, setCreateTextBody] = useState('');
@@ -1084,6 +1124,34 @@ export default function HomePage() {
     setToastMessage(text);
     setTimeout(() => setToastMessage(null), timeoutMs);
   }, []);
+
+  const canEditPost = useCallback(
+    (message: Message) => Boolean(isAdmin && currentUserId && message.authorId && message.authorId === currentUserId),
+    [currentUserId, isAdmin],
+  );
+
+  const canDeletePost = useCallback((message: Message) => canEditPost(message), [canEditPost]);
+
+  const canEditComment = useCallback(
+    (comment: Comment) => Boolean(comment.userId && currentUserId && comment.userId === currentUserId),
+    [currentUserId],
+  );
+
+  const canDeleteComment = useCallback(
+    (comment: Comment) => {
+      const isOwner = Boolean(comment.userId && currentUserId && comment.userId === currentUserId);
+      return isOwner || isAdmin;
+    },
+    [currentUserId, isAdmin],
+  );
+
+  const canEditDirectMessage = useCallback(
+    (msg: PersonalMessage) =>
+      Boolean(msg.author === 'listener' && msg.fromUserId && currentUserId && msg.fromUserId === currentUserId),
+    [currentUserId],
+  );
+
+  const canDeleteDirectMessage = useCallback((msg: PersonalMessage) => canEditDirectMessage(msg), [canEditDirectMessage]);
 
   const startActionLock = useCallback((duration = 500) => {
     if (actionLockTimeoutRef.current) {
@@ -2031,6 +2099,169 @@ export default function HomePage() {
     }
   };
 
+  const startEditPost = (message: Message) => {
+    if (!canEditPost(message)) return;
+    setEditingPostId(message.id);
+    setPostDrafts((prev) => ({ ...prev, [message.id]: prev[message.id] ?? message.text ?? '' }));
+  };
+
+  const cancelEditPost = () => {
+    setEditingPostId(null);
+  };
+
+  const savePostEdit = async (message: Message) => {
+    const draft = (postDrafts[message.id] ?? message.text ?? '').trim();
+    if (!draft) {
+      showToast('Post text cannot be empty.');
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || postsSource !== 'supabase') {
+      showToast('Editing is available only when Supabase is configured.');
+      return;
+    }
+
+    setPostSavingId(message.id);
+    try {
+      const { error } = await supabase
+        .from('posts')
+        .update({ body_text: draft, updated_at: new Date().toISOString() })
+        .eq('id', message.id)
+        .eq('author_id', currentUserId || '');
+
+      if (error) throw error;
+
+      const updatedAt = new Date().toISOString();
+      setFeedMessages((prev) =>
+        prev.map((m) => (m.id === message.id ? { ...m, text: draft, updatedAt } : m)),
+      );
+      setEditingPostId(null);
+      showToast('Post updated.');
+    } catch (err) {
+      console.error('[data] Failed to update post', err);
+      showToast('Failed to update post.');
+    } finally {
+      setPostSavingId(null);
+    }
+  };
+
+  const deletePost = async (message: Message) => {
+    if (!canDeletePost(message)) return;
+    if (!window.confirm('Delete this post?')) return;
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || postsSource !== 'supabase') {
+      showToast('Deleting is available only when Supabase is configured.');
+      return;
+    }
+
+    setPostDeletingId(message.id);
+    try {
+      const { error } = await supabase
+        .from('posts')
+        .update({ is_deleted: true, updated_at: new Date().toISOString() })
+        .eq('id', message.id)
+        .eq('author_id', currentUserId || '');
+
+      if (error) throw error;
+
+      setFeedMessages((prev) => prev.filter((m) => m.id !== message.id));
+      setCommentsByPostId((prev) => {
+        const next = { ...prev };
+        delete next[message.id];
+        return next;
+      });
+      setEditingPostId((prev) => (prev === message.id ? null : prev));
+      if (activeMessageId === message.id) {
+        closeComments();
+      }
+      showToast('Post deleted.');
+    } catch (err) {
+      console.error('[data] Failed to delete post', err);
+      showToast('Failed to delete post.');
+    } finally {
+      setPostDeletingId(null);
+    }
+  };
+
+  const startEditDirectMessage = (msg: PersonalMessage) => {
+    if (!canEditDirectMessage(msg)) return;
+    setEditingDmId(msg.id);
+    setDmDrafts((prev) => ({ ...prev, [msg.id]: prev[msg.id] ?? msg.text }));
+  };
+
+  const cancelEditDirectMessage = () => {
+    setEditingDmId(null);
+  };
+
+  const saveDirectMessageEdit = async (msg: PersonalMessage) => {
+    if (!canEditDirectMessage(msg)) return;
+    const draft = (dmDrafts[msg.id] ?? msg.text).trim();
+    if (!draft) {
+      showToast('Message cannot be empty.');
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      showToast('Supabase is required to edit messages.');
+      return;
+    }
+
+    setDmSavingId(msg.id);
+    try {
+      const { error } = await supabase
+        .from('direct_messages')
+        .update({ body_text: draft, updated_at: new Date().toISOString() })
+        .eq('id', msg.id)
+        .eq('from_user_id', currentUserId || '');
+
+      if (error) throw error;
+
+      const updatedAt = new Date().toISOString();
+      setPersonalMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, text: draft, updatedAt } : m)));
+      setEditingDmId(null);
+      showToast('Message updated.');
+    } catch (err) {
+      console.error('[data] Failed to edit direct message', err);
+      showToast('Failed to edit message.');
+    } finally {
+      setDmSavingId(null);
+    }
+  };
+
+  const deleteDirectMessage = async (msg: PersonalMessage) => {
+    if (!canDeleteDirectMessage(msg)) return;
+    if (!window.confirm('Delete this message?')) return;
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      showToast('Supabase is required to delete messages.');
+      return;
+    }
+
+    setDmDeletingId(msg.id);
+    try {
+      const { error } = await supabase
+        .from('direct_messages')
+        .update({ is_deleted: true, updated_at: new Date().toISOString() })
+        .eq('id', msg.id)
+        .eq('from_user_id', currentUserId || '');
+
+      if (error) throw error;
+
+      setPersonalMessages((prev) => prev.filter((m) => m.id !== msg.id));
+      setEditingDmId((prev) => (prev === msg.id ? null : prev));
+      showToast('Message deleted.');
+    } catch (err) {
+      console.error('[data] Failed to delete direct message', err);
+      showToast('Failed to delete message.');
+    } finally {
+      setDmDeletingId(null);
+    }
+  };
+
   const handleTreat = (type: string) => {
     alert(
       `This would open an external donation/payment page (e.g. BuyMeACoffee / Payoneer) for: ${type}`,
@@ -2610,6 +2841,106 @@ export default function HomePage() {
     }
   };
 
+  const startEditComment = (comment: Comment) => {
+    if (!canEditComment(comment)) return;
+    setEditingCommentId(comment.id);
+    setCommentDrafts((prev) => ({ ...prev, [comment.id]: prev[comment.id] ?? comment.text }));
+  };
+
+  const cancelEditComment = () => {
+    setEditingCommentId(null);
+  };
+
+  const saveCommentEdit = async (comment: Comment) => {
+    if (!canEditComment(comment)) return;
+    const postId = comment.postId || activeMessageId;
+    const draft = (commentDrafts[comment.id] ?? comment.text).trim();
+    if (!draft) {
+      showToast('Comment cannot be empty.');
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || postsSource === 'mock') {
+      showToast('Supabase is required to edit comments.');
+      return;
+    }
+
+    setCommentSavingId(comment.id);
+    try {
+      const { error } = await supabase
+        .from('comments')
+        .update({ body_text: draft, updated_at: new Date().toISOString() })
+        .eq('id', comment.id)
+        .eq('user_id', currentUserId || '');
+
+      if (error) throw error;
+
+      const updatedAt = new Date().toISOString();
+      if (postId) {
+        setCommentsByPostId((prev) => {
+          const existing = prev[postId] || [];
+          return {
+            ...prev,
+            [postId]: existing.map((c) => (c.id === comment.id ? { ...c, text: draft, updatedAt } : c)),
+          };
+        });
+      }
+      setEditingCommentId(null);
+      showToast('Comment updated.');
+    } catch (err) {
+      console.error('[data] Failed to edit comment', err);
+      showToast('Failed to edit comment.');
+    } finally {
+      setCommentSavingId(null);
+    }
+  };
+
+  const deleteComment = async (comment: Comment) => {
+    if (!canDeleteComment(comment)) return;
+    if (!window.confirm('Delete this comment?')) return;
+    const postId = comment.postId || activeMessageId;
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || postsSource === 'mock') {
+      showToast('Supabase is required to delete comments.');
+      return;
+    }
+
+    setCommentDeletingId(comment.id);
+    try {
+      let query = supabase
+        .from('comments')
+        .update({ is_deleted: true, updated_at: new Date().toISOString() })
+        .eq('id', comment.id);
+
+      if (!isAdmin) {
+        query = query.eq('user_id', currentUserId || '');
+      }
+
+      const { error } = await query;
+      if (error) throw error;
+
+      if (postId) {
+        setCommentsByPostId((prev) => {
+          const existing = prev[postId] || [];
+          const filtered = existing.filter((c) => c.id !== comment.id);
+          const next = { ...prev, [postId]: filtered };
+          if (filtered.length === 0) {
+            delete next[postId];
+          }
+          return next;
+        });
+      }
+      setEditingCommentId((prev) => (prev === comment.id ? null : prev));
+      showToast('Comment deleted.');
+    } catch (err) {
+      console.error('[data] Failed to delete comment', err);
+      showToast('Failed to delete comment.');
+    } finally {
+      setCommentDeletingId(null);
+    }
+  };
+
   const hasUnreadAdminMessage = adminMessages.some((m) => m.isUnread);
 
   const renderWithDateDividers = <T extends { id: string; createdAt?: string }>(
@@ -2669,6 +3000,9 @@ export default function HomePage() {
         </div>
         {personalMessages.map((msg) => {
           const isArtist = msg.author === 'artist';
+          const canEditMsg = canEditDirectMessage(msg);
+          const isEditing = editingDmId === msg.id;
+          const draftValue = dmDrafts[msg.id] ?? msg.text;
           return (
             <div
               key={msg.id}
@@ -2679,11 +3013,67 @@ export default function HomePage() {
               }}
             >
               <div className="message__bubble message__bubble--text">
-                <p className="message__handwriting">{msg.text}</p>
+                {isEditing ? (
+                  <>
+                    <textarea
+                      value={draftValue}
+                      onChange={(e) =>
+                        setDmDrafts((prev) => ({
+                          ...prev,
+                          [msg.id]: e.target.value,
+                        }))
+                      }
+                      className="write-view__textarea"
+                      style={{ minHeight: '100px', padding: '10px' }}
+                    />
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className="inline-btn"
+                        onClick={() => saveDirectMessageEdit(msg)}
+                        disabled={dmSavingId === msg.id}
+                      >
+                        {dmSavingId === msg.id ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-btn inline-btn--ghost"
+                        onClick={cancelEditDirectMessage}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <p className="message__handwriting">{msg.text}</p>
+                )}
                 <div className="message__meta">
                   {msg.date ? `${msg.date} • ${msg.time}` : msg.time}
+                  {msg.updatedAt && <span style={{ marginLeft: '6px' }}>(edited)</span>}
                 </div>
               </div>
+              {canEditMsg && !isEditing && (
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: '8px',
+                    marginTop: '6px',
+                    justifyContent: isArtist ? 'flex-start' : 'flex-end',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <button className="inline-btn" onClick={() => startEditDirectMessage(msg)}>
+                    Edit
+                  </button>
+                  <button
+                    className="inline-btn"
+                    onClick={() => deleteDirectMessage(msg)}
+                    disabled={dmDeletingId === msg.id}
+                  >
+                    {dmDeletingId === msg.id ? 'Deleting…' : 'Delete'}
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -3406,8 +3796,80 @@ export default function HomePage() {
                 // Skip date dividers - date is now shown in message__meta
                 if (item.type === 'date') return null;
                 const message = item.message;
+                const canEditThisPost = canEditPost(message);
+                const canDeleteThisPost = canDeletePost(message);
+                const isEditingThisPost = editingPostId === message.id;
+                const postDraftValue = postDrafts[message.id] ?? message.text ?? '';
                 return (
                   <div key={message.id} className="feed-item">
+                    {canEditThisPost && (
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '8px',
+                          marginBottom: '8px',
+                          background: 'rgba(255,255,255,0.03)',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          borderRadius: '10px',
+                          padding: '10px',
+                        }}
+                      >
+                        {!isEditingThisPost ? (
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                            <button
+                              type="button"
+                              className="inline-btn"
+                              onClick={() => startEditPost(message)}
+                              style={{ padding: '6px 10px' }}
+                            >
+                              Edit
+                            </button>
+                            {canDeleteThisPost && (
+                              <button
+                                type="button"
+                                className="inline-btn"
+                                onClick={() => deletePost(message)}
+                                disabled={postDeletingId === message.id}
+                                style={{ padding: '6px 10px' }}
+                              >
+                                {postDeletingId === message.id ? 'Deleting…' : 'Delete'}
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <textarea
+                              value={postDraftValue}
+                              onChange={(e) =>
+                                setPostDrafts((prev) => ({ ...prev, [message.id]: e.target.value }))
+                              }
+                              className="write-view__textarea"
+                              style={{ minHeight: '120px', padding: '10px' }}
+                            />
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              <button
+                                type="button"
+                                className="inline-btn"
+                                onClick={() => savePostEdit(message)}
+                                disabled={postSavingId === message.id}
+                                style={{ padding: '6px 10px' }}
+                              >
+                                {postSavingId === message.id ? 'Saving…' : 'Save'}
+                              </button>
+                              <button
+                                type="button"
+                                className="inline-btn inline-btn--ghost"
+                                onClick={cancelEditPost}
+                                style={{ padding: '6px 10px' }}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <MessageBubble
                       message={message}
                       isAdmin={isAdmin}
@@ -3932,8 +4394,56 @@ export default function HomePage() {
                     }}
                   >
                     {comment.author}
+                    {comment.updatedAt && (
+                      <span style={{ marginLeft: '8px', color: 'var(--text-secondary)', fontSize: '11px' }}>
+                        (edited)
+                      </span>
+                    )}
                   </div>
-                  <div className="comment__text">{comment.text}</div>
+                  {editingCommentId === comment.id ? (
+                    <>
+                      <textarea
+                        value={commentDrafts[comment.id] ?? comment.text}
+                        onChange={(e) =>
+                          setCommentDrafts((prev) => ({ ...prev, [comment.id]: e.target.value }))
+                        }
+                        className="write-view__textarea"
+                        style={{ minHeight: '80px', padding: '12px', marginTop: '6px' }}
+                      />
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                        <button
+                          className="inline-btn"
+                          onClick={() => saveCommentEdit(comment)}
+                          disabled={commentSavingId === comment.id}
+                        >
+                          {commentSavingId === comment.id ? 'Saving…' : 'Save'}
+                        </button>
+                        <button className="inline-btn inline-btn--ghost" onClick={cancelEditComment}>
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="comment__text">{comment.text}</div>
+                  )}
+                  {(canEditComment(comment) || canDeleteComment(comment)) && editingCommentId !== comment.id && (
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '6px', flexWrap: 'wrap' }}>
+                      {canEditComment(comment) && (
+                        <button className="inline-btn" onClick={() => startEditComment(comment)}>
+                          Edit
+                        </button>
+                      )}
+                      {canDeleteComment(comment) && (
+                        <button
+                          className="inline-btn"
+                          onClick={() => deleteComment(comment)}
+                          disabled={commentDeletingId === comment.id}
+                        >
+                          {commentDeletingId === comment.id ? 'Deleting…' : 'Delete'}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -4403,7 +4913,7 @@ function MessageBubble({
             storagePath={message.audioStoragePath}
             isReader={isReader}
           />
-          <div className="message__meta" style={{ marginTop: '8px' }}>
+          <div className="message__meta">
             {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
           </div>
         </div>
@@ -4411,7 +4921,7 @@ function MessageBubble({
         {message.text && (
           <div
             className={`message__caption-bubble ${deterrentClass}`}
-            style={{ marginTop: '10px' }}
+            style={{ marginTop: '8px' }}
             onContextMenu={handleContentContextMenu}
           >
             <p className="message__handwriting">{message.text}</p>

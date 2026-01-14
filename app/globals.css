@@ -238,14 +238,17 @@ button:focus {
   display: none;
 }
 
-/* Audio message bubble - no overflow hidden, flexible width for player */
+/* Audio message bubble - clean layout for player controls */
 .message__bubble--audio {
-  width: auto;
-  max-width: 320px;
+  position: relative;
+  display: block;
+  width: 100%;
+  max-width: 300px;
   overflow: visible;
   border-radius: var(--radius-bubble);
   border-bottom-left-radius: var(--space-xs);
-  padding: 12px 14px;
+  padding: 14px;
+  box-sizing: border-box;
 }
 
 .message__bubble--audio::after {
@@ -256,6 +259,14 @@ button:focus {
   width: 100%;
   display: block;
   min-height: 40px;
+  border-radius: 8px;
+}
+
+/* Override absolute positioning for meta inside audio bubble */
+.message__bubble--audio .message__meta {
+  position: static;
+  text-align: right;
+  margin-top: 8px;
 }
 
 .message__image {
