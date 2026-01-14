@@ -1450,14 +1450,6 @@ export default function HomePage() {
     setCurrentImageAspect(null);
   }, [photoViewer?.index, photoViewer?.images]);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const href = window.location.href;
-    if (href.includes('open=')) {
-      handleDeepLink(href);
-    }
-  }, [handleDeepLink]);
-
   const queueScrollToBottom = useCallback(
     (options?: { force?: boolean }) => {
       pendingScrollToBottom.current = true;
@@ -1499,6 +1491,14 @@ export default function HomePage() {
     },
     [queueScrollToBottom],
   );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const href = window.location.href;
+    if (href.includes('open=')) {
+      handleDeepLink(href);
+    }
+  }, [handleDeepLink]);
 
   useEffect(() => {
     if (activeView === 'home') {
@@ -2209,7 +2209,7 @@ export default function HomePage() {
           triggerPushEvent({
             eventType: 'admin_new_post',
             postId: newPostId as string,
-            messageText: mediaCaption.trim() || null,
+            messageText: mediaCaption.trim() || undefined,
             deepLink: '/?open=latest',
           });
           showToast(mediaIsVideo ? 'Video post published.' : `Photo post with ${uploads.length} image(s) published.`);
