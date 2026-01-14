@@ -44,8 +44,6 @@ type PushEventPayload = {
   deepLink?: string;
 };
 
-const PUSH_NOT_NOW_KEY = 'push-not-now-until';
-
 type AdminMessage = {
   id: string;
   author: 'Kareevsky';
@@ -828,17 +826,106 @@ export default function HomePage() {
   const [isIosBrowser, setIsIosBrowser] = useState(false);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [installBannerDismissed, setInstallBannerDismissed] = useState(false);
-  const [pushPermission, setPushPermission] = useState<NotificationPermission | 'unsupported'>('default');
-  const [showPushPrompt, setShowPushPrompt] = useState(false);
-  const [isPushPrompting, setIsPushPrompting] = useState(false);
+  const [pushPermission, setPushPermission] = useState<'default' | 'granted' | 'denied' | 'unsupported'>('default');
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [showPushBanner, setShowPushBanner] = useState(false);
   const [showInstallInstructions, setShowInstallInstructions] = useState(false);
-  const refreshPushPermission = useCallback(() => {
-    if (typeof Notification === 'undefined') {
+  const refreshPushStatus = useCallback(() => {
+    if (typeof window === 'undefined') {
       setPushPermission('unsupported');
+      setPushEnabled(false);
       return;
     }
-    setPushPermission(Notification.permission);
+
+    const perm = typeof Notification === 'undefined' ? 'unsupported' : (Notification.permission as NotificationPermission);
+    setPushPermission(perm === 'default' || perm === 'granted' || perm === 'denied' ? perm : 'unsupported');
+
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    window.OneSignalDeferred.push(async (OneSignal) => {
+      try {
+        const supported = OneSignal?.Notifications?.isPushSupported ? await OneSignal.Notifications.isPushSupported() : true;
+        if (!supported) {
+          setPushPermission('unsupported');
+          setPushEnabled(false);
+          return;
+        }
+        const subscribed = OneSignal?.Notifications?.isSubscribed
+          ? await OneSignal.Notifications.isSubscribed()
+          : OneSignal?.Notifications?.isPushEnabled
+            ? await OneSignal.Notifications.isPushEnabled()
+            : false;
+        setPushEnabled(Boolean(subscribed));
+      } catch (err) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[push] Status check failed', err);
+        }
+      }
+    });
   }, []);
+
+  const handleToggleNotifications = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    window.OneSignalDeferred.push(async (OneSignal) => {
+      try {
+        const perm = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
+
+        if (pushEnabled) {
+          if (OneSignal?.Notifications?.unsubscribe) {
+            await OneSignal.Notifications.unsubscribe();
+          } else if (OneSignal?.Notifications?.setSubscription) {
+            await OneSignal.Notifications.setSubscription(false);
+          }
+          setPushEnabled(false);
+          setShowPushBanner(true);
+          return;
+        }
+
+        if (perm === 'denied' || perm === 'unsupported') {
+          setPushPermission(perm as 'denied' | 'unsupported');
+          setPushEnabled(false);
+          setShowPushBanner(true);
+          return;
+        }
+
+        if (perm === 'default') {
+          if (OneSignal?.Notifications?.requestPermission) {
+            await OneSignal.Notifications.requestPermission();
+          } else if (OneSignal?.showNativePrompt) {
+            await OneSignal.showNativePrompt();
+          }
+        }
+
+        const finalPerm = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
+        setPushPermission(finalPerm as 'default' | 'granted' | 'denied' | 'unsupported');
+
+        if (finalPerm !== 'granted') {
+          setPushEnabled(false);
+          setShowPushBanner(true);
+          return;
+        }
+
+        if (OneSignal?.Notifications?.subscribe) {
+          await OneSignal.Notifications.subscribe();
+        } else if (OneSignal?.Notifications?.setSubscription) {
+          await OneSignal.Notifications.setSubscription(true);
+        }
+
+        const subscribed = OneSignal?.Notifications?.isSubscribed
+          ? await OneSignal.Notifications.isSubscribed()
+          : OneSignal?.Notifications?.isPushEnabled
+            ? await OneSignal.Notifications.isPushEnabled()
+            : false;
+
+        setPushEnabled(Boolean(subscribed));
+        if (!subscribed) setShowPushBanner(true);
+      } catch (err) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[push] Toggle failed', err);
+        }
+      }
+    });
+  }, [pushEnabled]);
   const pendingScrollToBottom = useRef(false);
   const forceScrollToBottom = useRef(false);
   const bodyOverflowRef = useRef<string | null>(null);
@@ -866,6 +953,7 @@ export default function HomePage() {
   const [viewerViewport, setViewerViewport] = useState({ width: 0, height: 0 });
   const isPhotoOpen = Boolean(photoViewer);
   const BOTTOM_EPSILON_PX = 4;
+  const pushBannerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const getScreenOrientation = () =>
     typeof window === 'undefined'
@@ -1075,10 +1163,11 @@ export default function HomePage() {
   useEffect(() => {
     if (typeof window === 'undefined') {
       setPushPermission('unsupported');
+      setPushEnabled(false);
       return;
     }
 
-    refreshPushPermission();
+    refreshPushStatus();
 
     const permApi = (navigator as any)?.permissions;
     let permStatus: PermissionStatus | null = null;
@@ -1089,7 +1178,10 @@ export default function HomePage() {
         .then((status: PermissionStatus) => {
           permStatus = status;
           setPushPermission(status.state as NotificationPermission);
-          status.onchange = () => setPushPermission(status.state as NotificationPermission);
+          status.onchange = () => {
+            setPushPermission(status.state as NotificationPermission);
+            refreshPushStatus();
+          };
         })
         .catch(() => {
           // ignore
@@ -1099,19 +1191,36 @@ export default function HomePage() {
     return () => {
       if (permStatus) permStatus.onchange = null;
     };
-  }, [refreshPushPermission]);
+  }, [refreshPushStatus]);
 
   useEffect(() => {
-    if (pushPermission === 'granted' || pushPermission === 'unsupported') {
-      setShowPushPrompt(false);
+    if (pushEnabled) {
+      setShowPushBanner(false);
+      if (pushBannerTimeoutRef.current) {
+        clearTimeout(pushBannerTimeoutRef.current);
+        pushBannerTimeoutRef.current = null;
+      }
       return;
     }
-    if (typeof window === 'undefined') return;
-    const dismissedUntil = Number(window.localStorage.getItem(PUSH_NOT_NOW_KEY) || '0');
-    if (!dismissedUntil || Date.now() > dismissedUntil) {
-      setShowPushPrompt(true);
+
+    if (pushPermission === 'unsupported') {
+      setShowPushBanner(false);
+      return;
     }
-  }, [pushPermission]);
+
+    setShowPushBanner(true);
+    if (pushBannerTimeoutRef.current) {
+      clearTimeout(pushBannerTimeoutRef.current);
+    }
+    pushBannerTimeoutRef.current = setTimeout(() => setShowPushBanner(false), 5000);
+
+    return () => {
+      if (pushBannerTimeoutRef.current) {
+        clearTimeout(pushBannerTimeoutRef.current);
+        pushBannerTimeoutRef.current = null;
+      }
+    };
+  }, [pushEnabled, pushPermission]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1793,35 +1902,6 @@ export default function HomePage() {
   const closeInstallInstructions = useCallback(() => {
     setShowInstallInstructions(false);
   }, []);
-
-  const handlePushNotNow = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    const until = Date.now() + 7 * 24 * 60 * 60 * 1000;
-    window.localStorage.setItem(PUSH_NOT_NOW_KEY, String(until));
-    setShowPushPrompt(false);
-  }, []);
-
-  const handlePushEnable = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    setIsPushPrompting(true);
-    window.OneSignalDeferred = window.OneSignalDeferred || [];
-    window.OneSignalDeferred.push(async (OneSignal) => {
-      try {
-        if (OneSignal?.Notifications?.requestPermission) {
-          await OneSignal.Notifications.requestPermission();
-        } else if (OneSignal?.showNativePrompt) {
-          await OneSignal.showNativePrompt();
-        }
-      } catch (err) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.warn('[push] Permission prompt failed', err);
-        }
-      } finally {
-        setIsPushPrompting(false);
-        refreshPushPermission();
-      }
-    });
-  }, [refreshPushPermission]);
 
   const handleInstallClick = useCallback(async () => {
     if (isStandalone) return;
@@ -3438,7 +3518,7 @@ export default function HomePage() {
       />
       {renderView()}
 
-      {showPushPrompt && pushPermission !== 'granted' && (
+      {showPushBanner && (
         <div
           className="push-banner"
           style={{
@@ -3453,51 +3533,12 @@ export default function HomePage() {
             border: '1px solid rgba(255,255,255,0.12)',
             borderRadius: '12px',
             padding: '12px 14px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '12px',
+            textAlign: 'center',
             boxShadow: '0 12px 24px rgba(0,0,0,0.35)',
           }}
         >
           <div style={{ color: 'white', fontSize: '14px', lineHeight: 1.4, fontFamily: 'var(--font-ui)' }}>
-            Enable notifications?
-          </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              onClick={handlePushEnable}
-              disabled={isPushPrompting}
-              className="button"
-              style={{
-                background: 'white',
-                color: 'black',
-                padding: '8px 12px',
-                borderRadius: '10px',
-                fontWeight: 600,
-                fontSize: '13px',
-                border: 'none',
-                cursor: 'pointer',
-                opacity: isPushPrompting ? 0.6 : 1,
-              }}
-            >
-              {isPushPrompting ? 'Loading…' : 'Enable'}
-            </button>
-            <button
-              onClick={handlePushNotNow}
-              className="button"
-              style={{
-                background: 'rgba(255,255,255,0.08)',
-                color: 'white',
-                padding: '8px 12px',
-                borderRadius: '10px',
-                fontWeight: 500,
-                fontSize: '13px',
-                border: '1px solid rgba(255,255,255,0.1)',
-                cursor: 'pointer',
-              }}
-            >
-              Not now
-            </button>
+            Notifications are turned off. You can enable them in the menu.
           </div>
         </div>
       )}
@@ -3530,15 +3571,25 @@ export default function HomePage() {
               <button
                 className="bottom-sheet__item"
                 onClick={() => {
-                  if (typeof window !== 'undefined') {
-                    window.localStorage.removeItem(PUSH_NOT_NOW_KEY);
-                  }
-                  setShowPushPrompt(true);
+                  handleToggleNotifications();
                   setMenuOpen(false);
                 }}
               >
                 <span className="bottom-sheet__icon">{Icons.refresh}</span>
-                Notifications
+                <span style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', justifyContent: 'space-between' }}>
+                  Notifications
+                  <span
+                    style={{
+                      padding: '2px 8px',
+                      borderRadius: '999px',
+                      background: 'rgba(255,255,255,0.12)',
+                      color: 'white',
+                      fontSize: '12px',
+                    }}
+                  >
+                    {pushEnabled ? 'On' : pushPermission === 'denied' ? 'Denied' : 'Off'}
+                  </span>
+                </span>
               </button>
               <button className="bottom-sheet__item" onClick={() => navigateTo('gallery')}>
                 <span className="bottom-sheet__icon">{Icons.gallery}</span>
@@ -4344,8 +4395,7 @@ function MessageBubble({
     return (
       <div className="message">
         <div
-          className={`message__bubble message__bubble--photo ${deterrentClass}`}
-          style={{ width: 'auto', maxWidth: '100%' }}
+          className={`message__bubble message__bubble--audio ${deterrentClass}`}
           onContextMenu={handleContentContextMenu}
         >
           <AudioPostPlayer
@@ -4353,7 +4403,7 @@ function MessageBubble({
             storagePath={message.audioStoragePath}
             isReader={isReader}
           />
-          <div className="message__meta message__meta--photo">
+          <div className="message__meta" style={{ marginTop: '8px' }}>
             {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
           </div>
         </div>

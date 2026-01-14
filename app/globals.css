@@ -238,6 +238,26 @@ button:focus {
   display: none;
 }
 
+/* Audio message bubble - no overflow hidden, flexible width for player */
+.message__bubble--audio {
+  width: auto;
+  max-width: 320px;
+  overflow: visible;
+  border-radius: var(--radius-bubble);
+  border-bottom-left-radius: var(--space-xs);
+  padding: 12px 14px;
+}
+
+.message__bubble--audio::after {
+  display: none;
+}
+
+.message__bubble--audio audio {
+  width: 100%;
+  display: block;
+  min-height: 40px;
+}
+
 .message__image {
   width: 200px;
   height: 200px;
