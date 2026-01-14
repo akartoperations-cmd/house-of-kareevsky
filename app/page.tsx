@@ -131,6 +131,40 @@ const formatShortTime = (value?: string) => {
   }).format(d);
 };
 
+const URL_REGEX = /((https?:\/\/[^\s]+)|(www\.[^\s]+))/gi;
+
+const linkifyTextNodes = (text: string): Array<string | JSX.Element> => {
+  if (!text) return [''];
+
+  const nodes: Array<string | JSX.Element> = [];
+  let lastIndex = 0;
+
+  text.replace(URL_REGEX, (match, _full, _httpMatch, _wwwMatch, offset) => {
+    if (typeof offset !== 'number') return match;
+    if (offset > lastIndex) {
+      nodes.push(text.slice(lastIndex, offset));
+    }
+
+    const href = match.startsWith('www.') ? `https://${match}` : match;
+    nodes.push(
+      <a key={`link-${offset}-${match}`} href={href} target="_blank" rel="noopener noreferrer">
+        {match}
+      </a>,
+    );
+
+    lastIndex = offset + match.length;
+    return match;
+  });
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes.length ? nodes : [text];
+};
+
+const renderLinkifiedText = (text?: string | null) => linkifyTextNodes(text || '');
+
 type PostMediaRow = {
   id: string;
   post_id?: string | null;
@@ -715,6 +749,13 @@ const Icons = {
   sparkle: (
     <svg className="icon" viewBox="0 0 24 24">
       <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8L12 2z" />
+    </svg>
+  ),
+  share: (
+    <svg className="icon" viewBox="0 0 24 24">
+      <path d="M4 12v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6" />
+      <path d="M16 8l-4-4-4 4" />
+      <path d="M12 4v12" />
     </svg>
   ),
   back: (
@@ -2106,6 +2147,80 @@ export default function HomePage() {
     setActiveMessageId(null);
   };
 
+  const buildPostShareUrl = useCallback((postId: string) => {
+    if (typeof window === 'undefined' || !postId) return '';
+    const origin = window.location.origin || '';
+    return `${origin}/?open=post&postId=${encodeURIComponent(postId)}`;
+  }, []);
+
+  const copyToClipboard = useCallback(async (value: string) => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(value);
+        return true;
+      } catch (err) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[share] Clipboard API failed', err);
+        }
+      }
+    }
+
+    if (typeof document === 'undefined') return false;
+
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = value;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'absolute';
+      textarea.style.left = '-9999px';
+      document.body.appendChild(textarea);
+      textarea.select();
+      const success = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return success;
+    } catch (err) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[share] execCommand copy failed', err);
+      }
+      return false;
+    }
+  }, []);
+
+  const sharePost = useCallback(
+    async (message: Message) => {
+      const url = buildPostShareUrl(message.id);
+      if (!url) {
+        showToast('Link unavailable');
+        return;
+      }
+
+      const shareData = {
+        title: `${BRANDING.name} post`,
+        text: message.text || undefined,
+        url,
+      };
+      const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+
+      if (canShare) {
+        try {
+          await navigator.share(shareData);
+          return;
+        } catch (err) {
+          if ((err as { name?: string }).name === 'AbortError') {
+            return;
+          }
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('[share] navigator.share failed', err);
+          }
+        }
+      }
+
+      const copied = await copyToClipboard(url);
+      showToast(copied ? 'Link copied' : 'Unable to copy link');
+    },
+    [buildPostShareUrl, copyToClipboard, showToast],
+  );
+
   const toggleBookmark = (messageId: string) => {
     setBookmarks((prev) => {
       const nextValue = !prev[messageId];
@@ -2522,6 +2637,14 @@ export default function HomePage() {
   const toggleAudio = (audioId: string) => {
     setPlayingAudio(playingAudio === audioId ? null : audioId);
   };
+
+  const preventReaderContextMenu = useCallback(
+    (event: React.MouseEvent) => {
+      if (isAdmin) return;
+      event.preventDefault();
+    },
+    [isAdmin],
+  );
 
   const resetMediaSelection = () => {
     setMediaFiles([]);
@@ -3994,6 +4117,7 @@ export default function HomePage() {
                   onReact={() => toggleEmojiPanel(message.id)}
                   onSelectEmoji={(emoji) => selectReaction(message.id, emoji)}
                   onOpenGallery={(images) => openPostGallery(images)}
+                  onShare={() => sharePost(message)}
                   onShowToast={showToast}
                   onVoteOption={
                     message.type === 'poll' && message.pollId && (message.pollOptionStats?.length || message.pollOptions?.length)
@@ -4256,9 +4380,10 @@ export default function HomePage() {
                       onReact={() => toggleEmojiPanel(message.id)}
                       onSelectEmoji={(emoji) => selectReaction(message.id, emoji)}
                       onOpenGallery={(images) => openPostGallery(images)}
+                      onShare={() => sharePost(message)}
                       onShowToast={showToast}
                       onVoteOption={
-                        message.type === 'poll' && message.pollId
+                    message.type === 'poll' && message.pollId && (message.pollOptionStats?.length || message.pollOptions?.length)
                           ? (optionId) => voteOnPollOption(message.pollId as string, optionId)
                           : undefined
                       }
@@ -4945,6 +5070,7 @@ interface MessageBubbleProps {
   onReact: () => void;
   onSelectEmoji: (emoji: string) => void;
   onOpenGallery: (images: string[]) => void;
+  onShare: () => void;
   onShowToast: (text: string, timeoutMs?: number) => void;
   onVoteOption?: (optionId: string) => void;
   pollIsVoting?: boolean;
@@ -4961,6 +5087,7 @@ function MessageBubble({
   onReact,
   onSelectEmoji,
   onOpenGallery,
+  onShare,
   onShowToast,
   onVoteOption,
   pollIsVoting,
@@ -5025,7 +5152,7 @@ function MessageBubble({
             {missingLanguage && (
               <div className="i18n-missing">This language is not available yet. Please read another one.</div>
             )}
-            <p className="message__handwriting">{content || ''}</p>
+            <p className="message__handwriting">{renderLinkifiedText(content || '')}</p>
             <div className="message__meta">
               {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
             </div>
@@ -5048,6 +5175,10 @@ function MessageBubble({
             <button className="actions__btn" onClick={onReact}>
               {Icons.sparkle}
               <span>React</span>
+            </button>
+            <button className="actions__btn" onClick={onShare}>
+              {Icons.share}
+              <span>Share</span>
             </button>
           </div>
 
@@ -5164,6 +5295,10 @@ function MessageBubble({
             {Icons.sparkle}
             <span>React</span>
           </button>
+          <button className="actions__btn" onClick={onShare}>
+            {Icons.share}
+            <span>Share</span>
+          </button>
         </div>
 
         {emojiPanelOpen && (
@@ -5241,6 +5376,28 @@ function MessageBubble({
             {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
           </div>
         </div>
+      {reaction && <div className="message__reaction">{reaction}</div>}
+      <div className="actions">
+        <button className="actions__btn" onClick={onSay}>
+          {Icons.message}
+          <span>Say</span>
+        </button>
+        <button
+          className={`actions__btn ${isBookmarked ? 'actions__btn--active' : ''}`}
+          onClick={onBookmark}
+        >
+          {isBookmarked ? Icons.bookmarkFilled : Icons.bookmark}
+          <span>{isBookmarked ? 'Saved' : 'Read later'}</span>
+        </button>
+        <button className="actions__btn" onClick={onReact}>
+          {Icons.sparkle}
+          <span>React</span>
+        </button>
+        <button className="actions__btn" onClick={onShare}>
+          {Icons.share}
+          <span>Share</span>
+        </button>
+      </div>
       </div>
     );
   }
@@ -5301,7 +5458,7 @@ function MessageBubble({
             className={`message__caption-bubble ${deterrentClass}`}
             onContextMenu={handleContentContextMenu}
           >
-            <p className="message__caption">{caption}</p>
+            <p className="message__caption">{renderLinkifiedText(caption)}</p>
           </div>
         )}
 
@@ -5322,6 +5479,10 @@ function MessageBubble({
           <button className="actions__btn" onClick={onReact}>
             {Icons.sparkle}
             <span>React</span>
+          </button>
+          <button className="actions__btn" onClick={onShare}>
+            {Icons.share}
+            <span>Share</span>
           </button>
         </div>
 
@@ -5361,7 +5522,7 @@ function MessageBubble({
             style={{ marginTop: '8px' }}
             onContextMenu={handleContentContextMenu}
           >
-            <p className="message__handwriting">{message.text}</p>
+            <p className="message__handwriting">{renderLinkifiedText(message.text)}</p>
           </div>
         )}
 
@@ -5382,6 +5543,10 @@ function MessageBubble({
           <button className="actions__btn" onClick={onReact}>
             {Icons.sparkle}
             <span>React</span>
+          </button>
+          <button className="actions__btn" onClick={onShare}>
+            {Icons.share}
+            <span>Share</span>
           </button>
         </div>
 
@@ -5437,6 +5602,10 @@ function MessageBubble({
             {Icons.sparkle}
             <span>React</span>
           </button>
+          <button className="actions__btn" onClick={onShare}>
+            {Icons.share}
+            <span>Share</span>
+          </button>
         </div>
 
         {emojiPanelOpen && (
@@ -5458,7 +5627,7 @@ function MessageBubble({
         className={`message__bubble message__bubble--text ${deterrentClass}`}
         onContextMenu={handleContentContextMenu}
       >
-        <p className="message__handwriting">{message.text}</p>
+        <p className="message__handwriting">{renderLinkifiedText(message.text)}</p>
         {/* Date shown at bottom-right next to time */}
         <div className="message__meta">
           {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
@@ -5482,6 +5651,10 @@ function MessageBubble({
         <button className="actions__btn" onClick={onReact}>
           {Icons.sparkle}
           <span>React</span>
+        </button>
+        <button className="actions__btn" onClick={onShare}>
+          {Icons.share}
+          <span>Share</span>
         </button>
       </div>
 
