@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import { externalPlatforms, type ExternalPlatform } from '@/app/lib/externalPlatforms';
 import { useAccessRedirect } from '@/app/lib/useAccessRedirect';
 
 type Step = 1 | 2 | 3;
@@ -17,6 +18,22 @@ const STORY_BLOCKS = [
 
 const checkoutUrl = process.env.NEXT_PUBLIC_DIGISTORE_CHECKOUT_URL || '';
 const checkoutConfigured = Boolean(checkoutUrl);
+
+const platformIcons: Record<ExternalPlatform['icon'], JSX.Element> = {
+  instagram: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="5" ry="5" />
+      <circle cx="12" cy="12" r="4.5" />
+      <circle cx="17.5" cy="6.5" r="1.25" />
+    </svg>
+  ),
+  book: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 4.5h10a2 2 0 0 1 2 2v12.25c0 .69-.56 1.25-1.25 1.25H6a2 2 0 0 1-2-2v-11.5a2 2 0 0 1 2-2z" />
+      <path d="M6 6.5h12" />
+    </svg>
+  ),
+};
 
 export default function WelcomePage() {
   const access = useAccessRedirect('welcome');
@@ -138,6 +155,31 @@ export default function WelcomePage() {
               </button>
             )}
           </div>
+
+          {externalPlatforms.length > 0 && (
+            <div className="welcome-preview">
+              <div className="welcome-preview__text">
+                <span className="welcome-preview__title">Want a quick preview first?</span>
+                <span className="welcome-preview__subtitle">Short excerpts are here:</span>
+              </div>
+              <div className="welcome-preview__icons">
+                {externalPlatforms.map((platform) => (
+                  <a
+                    key={platform.id}
+                    className="welcome-preview__button"
+                    href={platform.href}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    <span className="welcome-preview__icon" aria-hidden="true">
+                      {platformIcons[platform.icon]}
+                    </span>
+                    <span className="welcome-preview__label">{platform.label}</span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
 
           {!checkoutConfigured && (
             <div className="welcome-inline-message">Checkout is not configured yet.</div>

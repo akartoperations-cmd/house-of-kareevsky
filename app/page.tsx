@@ -206,6 +206,28 @@ type PollDataByPostId = Record<string, PollMessageData>;
 
 const ADMIN_USER_ID = process.env.NEXT_PUBLIC_ADMIN_USER_ID || null;
 
+type SupabaseError = { code?: string; message?: string; details?: string; hint?: string };
+
+const friendlySupabaseError = (err: unknown): string => {
+  const supa = (err || {}) as SupabaseError;
+  const code = supa.code || '';
+  const message = (supa.message || '').toLowerCase();
+
+  if (code === '42501' || message.includes('row-level security') || message.includes('permission')) {
+    return 'You do not have permission to do that. Please sign in again.';
+  }
+
+  if (code === '42P01' || message.includes('relation') || message.includes('table')) {
+    return 'Polls are not available yet. Please retry after a refresh.';
+  }
+
+  if (message.includes('duplicate') || code === '23505') {
+    return 'This item already exists.';
+  }
+
+  return supa.message || 'Unexpected error occurred.';
+};
+
 const triggerPushEvent = async (payload: PushEventPayload) => {
   try {
     await fetch('/api/push', {
@@ -382,6 +404,16 @@ const mapPostRowToMessage = (
   const pollData = pollDataByPostId?.[row.id];
   const pollQuestion = pollData?.question || (meta.poll_question as string | undefined);
   const pollOptions = pollData ? pollData.options.map((o) => o.text) : (meta.poll_options as string[] | undefined);
+  const pollOptionStats =
+    pollData?.options ||
+    (messageType === 'poll' && pollOptions?.length
+      ? pollOptions.slice(0, 4).map((text, idx) => ({ id: `${row.id}-opt-${idx}`, text, votes: 0 }))
+      : undefined);
+  const pollTotalVotes =
+    pollData?.totalVotes ??
+    (pollOptionStats && pollOptionStats.length > 0
+      ? pollOptionStats.reduce((sum, opt) => sum + (opt.votes || 0), 0)
+      : undefined);
   const caption = meta.caption as string | undefined;
   const subtitle = meta.subtitle as string | undefined;
   const videoMedia = typedMedia.find((m) => m.media_type === 'video');
@@ -411,8 +443,8 @@ const mapPostRowToMessage = (
     pollQuestion,
     pollOptions,
     pollId: pollData?.pollId || (meta.poll_id as string | undefined),
-    pollOptionStats: pollData?.options,
-    pollTotalVotes: pollData?.totalVotes ?? (pollData ? 0 : undefined),
+    pollOptionStats,
+    pollTotalVotes,
     pollUserVoteOptionId: pollData ? pollData.userVoteOptionId : null,
     i18nPack,
   };
@@ -844,6 +876,7 @@ export default function HomePage() {
   const [postDrafts, setPostDrafts] = useState<Record<string, string>>({});
   const [postSavingId, setPostSavingId] = useState<string | null>(null);
   const [postDeletingId, setPostDeletingId] = useState<string | null>(null);
+  const [postActionsOpenId, setPostActionsOpenId] = useState<string | null>(null);
   const [editingDmId, setEditingDmId] = useState<string | null>(null);
   const [dmDrafts, setDmDrafts] = useState<Record<string, string>>({});
   const [dmSavingId, setDmSavingId] = useState<string | null>(null);
@@ -904,18 +937,17 @@ export default function HomePage() {
   const [pushEnabled, setPushEnabled] = useState(false);
   const [showPushBanner, setShowPushBanner] = useState(false);
   const [showInstallInstructions, setShowInstallInstructions] = useState(false);
-  const refreshPushStatus = useCallback(() => {
-    if (typeof window === 'undefined') {
-      setPushPermission('unsupported');
-      setPushEnabled(false);
-      return;
-    }
+  const syncPushStatus = useCallback(
+    async (OneSignalInstance?: any) => {
+      const perm = typeof Notification === 'undefined' ? 'unsupported' : (Notification.permission as NotificationPermission);
+      setPushPermission(perm === 'default' || perm === 'granted' || perm === 'denied' ? perm : 'unsupported');
+      const OneSignal = OneSignalInstance;
 
-    const perm = typeof Notification === 'undefined' ? 'unsupported' : (Notification.permission as NotificationPermission);
-    setPushPermission(perm === 'default' || perm === 'granted' || perm === 'denied' ? perm : 'unsupported');
+      if (perm === 'denied' || perm === 'unsupported') {
+        setPushEnabled(false);
+      }
 
-    window.OneSignalDeferred = window.OneSignalDeferred || [];
-    window.OneSignalDeferred.push(async (OneSignal) => {
+      if (!OneSignal) return;
       try {
         const supported = OneSignal?.Notifications?.isPushSupported ? await OneSignal.Notifications.isPushSupported() : true;
         if (!supported) {
@@ -931,18 +963,39 @@ export default function HomePage() {
         setPushEnabled(Boolean(subscribed));
       } catch (err) {
         if (process.env.NODE_ENV !== 'production') {
-          console.warn('[push] Status check failed', err);
+          console.warn('[push] Status sync failed', err);
         }
       }
+    },
+    [],
+  );
+  const refreshPushStatus = useCallback(() => {
+    if (typeof window === 'undefined') {
+      setPushPermission('unsupported');
+      setPushEnabled(false);
+      return;
+    }
+
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    window.OneSignalDeferred.push(async (OneSignal) => {
+      await syncPushStatus(OneSignal);
     });
-  }, []);
+    syncPushStatus();
+  }, [syncPushStatus]);
 
   const handleToggleNotifications = useCallback(() => {
     if (typeof window === 'undefined') return;
     window.OneSignalDeferred = window.OneSignalDeferred || [];
     window.OneSignalDeferred.push(async (OneSignal) => {
       try {
-        const perm = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
+        const currentPerm =
+          typeof Notification === 'undefined' ? 'unsupported' : (Notification.permission as NotificationPermission);
+
+        if (currentPerm === 'denied' || currentPerm === 'unsupported') {
+          setPushPermission(currentPerm);
+          setPushEnabled(false);
+          return;
+        }
 
         if (pushEnabled) {
           if (OneSignal?.Notifications?.unsubscribe) {
@@ -950,19 +1003,12 @@ export default function HomePage() {
           } else if (OneSignal?.Notifications?.setSubscription) {
             await OneSignal.Notifications.setSubscription(false);
           }
-          setPushEnabled(false);
+          await syncPushStatus(OneSignal);
           setShowPushBanner(true);
           return;
         }
 
-        if (perm === 'denied' || perm === 'unsupported') {
-          setPushPermission(perm as 'denied' | 'unsupported');
-          setPushEnabled(false);
-          setShowPushBanner(true);
-          return;
-        }
-
-        if (perm === 'default') {
+        if (currentPerm === 'default') {
           if (OneSignal?.Notifications?.requestPermission) {
             await OneSignal.Notifications.requestPermission();
           } else if (OneSignal?.showNativePrompt) {
@@ -970,8 +1016,9 @@ export default function HomePage() {
           }
         }
 
-        const finalPerm = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
-        setPushPermission(finalPerm as 'default' | 'granted' | 'denied' | 'unsupported');
+        const finalPerm =
+          typeof Notification === 'undefined' ? 'unsupported' : (Notification.permission as NotificationPermission);
+        setPushPermission(finalPerm);
 
         if (finalPerm !== 'granted') {
           setPushEnabled(false);
@@ -985,21 +1032,27 @@ export default function HomePage() {
           await OneSignal.Notifications.setSubscription(true);
         }
 
-        const subscribed = OneSignal?.Notifications?.isSubscribed
-          ? await OneSignal.Notifications.isSubscribed()
-          : OneSignal?.Notifications?.isPushEnabled
-            ? await OneSignal.Notifications.isPushEnabled()
-            : false;
-
-        setPushEnabled(Boolean(subscribed));
-        if (!subscribed) setShowPushBanner(true);
+        await syncPushStatus(OneSignal);
       } catch (err) {
         if (process.env.NODE_ENV !== 'production') {
           console.warn('[push] Toggle failed', err);
         }
       }
     });
-  }, [pushEnabled]);
+  }, [pushEnabled, syncPushStatus]);
+  const pushState = useMemo<'on' | 'off' | 'denied'>(() => {
+    if (pushPermission === 'denied' || pushPermission === 'unsupported') return 'denied';
+    return pushEnabled ? 'on' : 'off';
+  }, [pushEnabled, pushPermission]);
+  const handleNotificationsClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (pushState === 'denied') return;
+      handleToggleNotifications();
+    },
+    [handleToggleNotifications, pushState],
+  );
   const pendingScrollToBottom = useRef(false);
   const forceScrollToBottom = useRef(false);
   const bodyOverflowRef = useRef<string | null>(null);
@@ -1197,6 +1250,15 @@ export default function HomePage() {
       actionLockTimeoutRef.current = null;
     }, duration);
   }, []);
+
+  const closePostActionsMenu = useCallback(() => setPostActionsOpenId(null), []);
+
+  const togglePostActionsMenu = useCallback(
+    (messageId: string) => {
+      setPostActionsOpenId((prev) => (prev === messageId ? null : messageId));
+    },
+    [],
+  );
 
   useEffect(
     () => () => {
@@ -2127,7 +2189,7 @@ export default function HomePage() {
       }
     } catch (err) {
       console.error('[data] Failed to submit vote', err);
-      showToast('Failed to vote. Please try again.');
+      showToast(`Failed to vote: ${friendlySupabaseError(err)}`);
     } finally {
       setPollVoteLoadingById((prev) => {
         const next = { ...prev };
@@ -2288,6 +2350,7 @@ export default function HomePage() {
 
   const startEditPost = (message: Message) => {
     if (!canEditPost(message)) return;
+    closePostActionsMenu();
     setEditingPostId(message.id);
     setPostDrafts((prev) => ({ ...prev, [message.id]: prev[message.id] ?? message.text ?? '' }));
   };
@@ -2335,6 +2398,7 @@ export default function HomePage() {
 
   const deletePost = async (message: Message) => {
     if (!canDeletePost(message)) return;
+    closePostActionsMenu();
     if (!window.confirm('Delete this post?')) return;
 
     const supabase = getSupabaseBrowserClient();
@@ -2583,15 +2647,16 @@ export default function HomePage() {
       showToast('Supabase is not configured.');
       return;
     }
+
     if (isSavingPost) return;
 
-    setIsSavingPost(true);
     const { data: sessionData } = await supabase.auth.getSession();
     const authorId = sessionData?.session?.user?.id ?? null;
     if (!authorId) {
       showToast('Please sign in to publish.');
       return;
     }
+    setIsSavingPost(true);
     const timeLabel = formatShortTime();
 
     try {
@@ -3007,8 +3072,8 @@ export default function HomePage() {
       console.error('[data] Failed to save post', err);
       const toastMessage =
         createTab === 'media'
-          ? `Failed to save media post: ${errorMessage}`
-          : 'Failed to save post. Please try again.';
+          ? `Failed to save media post: ${friendlySupabaseError(err) || errorMessage}`
+          : `Failed to save post: ${friendlySupabaseError(err) || errorMessage}`;
       showToast(toastMessage);
     } finally {
       setIsSavingPost(false);
@@ -3931,7 +3996,7 @@ export default function HomePage() {
                   onOpenGallery={(images) => openPostGallery(images)}
                   onShowToast={showToast}
                   onVoteOption={
-                    message.type === 'poll' && message.pollId && message.pollOptionStats?.length
+                    message.type === 'poll' && message.pollId && (message.pollOptionStats?.length || message.pollOptions?.length)
                       ? (optionId) => voteOnPollOption(message.pollId as string, optionId)
                       : undefined
                   }
@@ -4068,10 +4133,70 @@ export default function HomePage() {
                 const canDeleteThisPost = canDeletePost(message);
                 const isEditingThisPost = editingPostId === message.id;
                 const postDraftValue = postDrafts[message.id] ?? message.text ?? '';
+                const showPostActionsMenu = (canEditThisPost || canDeleteThisPost) && !isEditingThisPost;
+                const postMenuOpen = postActionsOpenId === message.id;
                 return (
                   <div key={message.id} className="feed-item">
-                    {canEditThisPost && (
+                    {showPostActionsMenu && (
                       <div
+                        className="post-actions-menu"
+                        onClickCapture={(e) => e.stopPropagation()}
+                        onPointerDown={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          className="post-actions-menu__trigger"
+                          aria-haspopup="menu"
+                          aria-expanded={postMenuOpen}
+                          aria-label="Post actions"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            togglePostActionsMenu(message.id);
+                          }}
+                          onPointerDown={(e) => e.stopPropagation()}
+                        >
+                          ⋯
+                        </button>
+                        {postMenuOpen && (
+                          <div className="post-actions-menu__list" role="menu">
+                            <button
+                              type="button"
+                              className="post-actions-menu__item"
+                              role="menuitem"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                startEditPost(message);
+                              }}
+                              onPointerDown={(e) => e.stopPropagation()}
+                            >
+                              Edit
+                            </button>
+                            {canDeleteThisPost && (
+                              <button
+                                type="button"
+                                className="post-actions-menu__item post-actions-menu__item--danger"
+                                role="menuitem"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  deletePost(message);
+                                }}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                disabled={postDeletingId === message.id}
+                              >
+                                {postDeletingId === message.id ? 'Deleting…' : 'Delete'}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {isEditingThisPost && canEditThisPost && (
+                      <div
+                        onClickCapture={(e) => e.stopPropagation()}
+                        onPointerDown={(e) => e.stopPropagation()}
                         style={{
                           display: 'flex',
                           flexDirection: 'column',
@@ -4083,59 +4208,41 @@ export default function HomePage() {
                           padding: '10px',
                         }}
                       >
-                        {!isEditingThisPost ? (
-                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                            <button
-                              type="button"
-                              className="inline-btn"
-                              onClick={() => startEditPost(message)}
-                              style={{ padding: '6px 10px' }}
-                            >
-                              Edit
-                            </button>
-                            {canDeleteThisPost && (
-                              <button
-                                type="button"
-                                className="inline-btn"
-                                onClick={() => deletePost(message)}
-                                disabled={postDeletingId === message.id}
-                                style={{ padding: '6px 10px' }}
-                              >
-                                {postDeletingId === message.id ? 'Deleting…' : 'Delete'}
-                              </button>
-                            )}
-                          </div>
-                        ) : (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <textarea
-                              value={postDraftValue}
-                              onChange={(e) =>
-                                setPostDrafts((prev) => ({ ...prev, [message.id]: e.target.value }))
-                              }
-                              className="write-view__textarea"
-                              style={{ minHeight: '120px', padding: '10px' }}
-                            />
-                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                              <button
-                                type="button"
-                                className="inline-btn"
-                                onClick={() => savePostEdit(message)}
-                                disabled={postSavingId === message.id}
-                                style={{ padding: '6px 10px' }}
-                              >
-                                {postSavingId === message.id ? 'Saving…' : 'Save'}
-                              </button>
-                              <button
-                                type="button"
-                                className="inline-btn inline-btn--ghost"
-                                onClick={cancelEditPost}
-                                style={{ padding: '6px 10px' }}
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        )}
+                        <textarea
+                          value={postDraftValue}
+                          onChange={(e) =>
+                            setPostDrafts((prev) => ({ ...prev, [message.id]: e.target.value }))
+                          }
+                          className="write-view__textarea"
+                          style={{ minHeight: '120px', padding: '10px' }}
+                        />
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            className="inline-btn"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              savePostEdit(message);
+                            }}
+                            disabled={postSavingId === message.id}
+                            style={{ padding: '6px 10px' }}
+                          >
+                            {postSavingId === message.id ? 'Saving…' : 'Save'}
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-btn inline-btn--ghost"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              cancelEditPost();
+                            }}
+                            style={{ padding: '6px 10px' }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
                       </div>
                     )}
                     <MessageBubble
@@ -4305,11 +4412,11 @@ export default function HomePage() {
                 </button>
               )}
               <button
-                className="bottom-sheet__item"
-                onClick={() => {
-                  handleToggleNotifications();
-                  setMenuOpen(false);
-                }}
+                type="button"
+                className={`bottom-sheet__item${pushState === 'denied' ? ' bottom-sheet__item--disabled' : ''}`}
+                onClick={handleNotificationsClick}
+                disabled={pushState === 'denied'}
+                aria-disabled={pushState === 'denied'}
               >
                 <span className="bottom-sheet__icon">{Icons.refresh}</span>
                 <span style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', justifyContent: 'space-between' }}>
@@ -4323,10 +4430,27 @@ export default function HomePage() {
                       fontSize: '12px',
                     }}
                   >
-                    {pushEnabled ? 'On' : pushPermission === 'denied' ? 'Denied' : 'Off'}
+                    {pushState === 'on' ? 'On' : pushState === 'denied' ? 'Denied' : 'Off'}
                   </span>
                 </span>
               </button>
+              {pushState === 'denied' && (
+                <div
+                  style={{
+                    marginTop: '-6px',
+                    marginBottom: '8px',
+                    background: 'rgba(255,255,255,0.08)',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    borderRadius: '10px',
+                    padding: '12px 14px',
+                    color: 'white',
+                    fontSize: '13px',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  Notifications are blocked in your browser/phone settings. Enable permission for this site, then return here.
+                </div>
+              )}
               <button className="bottom-sheet__item" onClick={() => navigateTo('gallery')}>
                 <span className="bottom-sheet__icon">{Icons.gallery}</span>
                 Gallery
