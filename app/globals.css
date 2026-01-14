@@ -564,8 +564,37 @@ button:focus {
   color: rgba(43, 65, 106, 0.85);
 }
 
+.poll__option:disabled {
+  opacity: 0.9;
+}
+
+.poll__option--selected {
+  border-color: rgba(43, 65, 106, 0.25);
+  background: rgba(0, 0, 0, 0.06);
+}
+
 .poll__option:active {
   transform: scale(0.99);
+}
+
+.poll__option-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+
+.poll__option-count {
+  font-size: 12px;
+  color: rgba(43, 65, 106, 0.7);
+}
+
+.poll__meta {
+  margin-top: 10px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: rgba(43, 65, 106, 0.7);
 }
 
 /* Emoji Panel */

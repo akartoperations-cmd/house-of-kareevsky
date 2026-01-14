@@ -30,7 +30,7 @@ export interface Message {
   type: 'photo' | 'text' | 'sticker' | 'poll' | 'i18n' | 'video' | 'audio';
   time: string;
   createdAt?: string;
-  updatedAt?: string | null;
+  updatedAt?: string;
   authorId?: string | null;
   isTest?: boolean;
   imageUrl?: string;
@@ -63,7 +63,7 @@ export interface Comment {
   text: string;
   userId?: string | null;
   postId?: string | null;
-  updatedAt?: string | null;
+  updatedAt?: string;
 }
 
 // Photos of the day
@@ -276,7 +276,7 @@ export interface PersonalMessage {
   date?: string;
   fromUserId?: string | null;
   toAdminId?: string | null;
-  updatedAt?: string | null;
+  updatedAt?: string;
 }
 
 export const personalThread: PersonalMessage[] = [
