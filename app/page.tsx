@@ -448,74 +448,45 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Always log props on mount
-  useEffect(() => {
-    console.log('[AudioPostPlayer] Props received:', { audioUrl, storagePath, isReader });
-  }, [audioUrl, storagePath, isReader]);
-
   useEffect(() => {
     let cancelled = false;
+    const basePath = storagePath || audioUrl || '';
 
-    const resolveUrl = async () => {
-      console.log('[AudioPostPlayer] Starting URL resolution...', { audioUrl, storagePath });
+    setStatus('loading');
+    setErrorMessage(null);
+    setResolvedSrc(null);
 
-      // 1) If we already have a valid http URL, use it directly
+    const tryResolve = async () => {
+      // If already an http URL, use directly
       if (audioUrl && isHttpUrl(audioUrl)) {
-        console.log('[AudioPostPlayer] Using existing HTTP audioUrl:', audioUrl);
         setResolvedSrc(audioUrl);
         setStatus('ready');
         return;
       }
 
-      // 2) Determine the storage path to use
-      const pathToResolve = storagePath || audioUrl;
-      if (!pathToResolve) {
-        console.warn('[AudioPostPlayer] No path available');
-        setStatus('error');
-        setErrorMessage('No audio file path');
-        return;
-      }
-
-      // 3) Normalize the path (remove URL prefixes, bucket name, etc.)
-      const normalizedPath = normalizeStoragePath(pathToResolve);
-      console.log('[AudioPostPlayer] Normalized path:', { original: pathToResolve, normalized: normalizedPath });
-
+      const normalizedPath = normalizeStoragePath(basePath);
       if (!normalizedPath) {
-        console.warn('[AudioPostPlayer] Path normalization failed');
         setStatus('error');
         setErrorMessage('Invalid audio path');
         return;
       }
 
-      // 4) Try to get Supabase client
       const supabase = getSupabaseBrowserClient();
-      console.log('[AudioPostPlayer] Supabase client:', supabase ? 'available' : 'NULL');
-
       if (supabase) {
         try {
-          // Try signed URL first
-          console.log('[AudioPostPlayer] Requesting signed URL for:', normalizedPath);
-          const { data, error } = await supabase.storage
-            .from(MEDIA_BUCKET)
-            .createSignedUrl(normalizedPath, 3600);
-
+          const { data, error } = await supabase.storage.from(MEDIA_BUCKET).createSignedUrl(normalizedPath, 3600);
           if (data?.signedUrl) {
-            console.log('[AudioPostPlayer] Got signed URL:', data.signedUrl.slice(0, 100) + '...');
             if (!cancelled) {
               setResolvedSrc(data.signedUrl);
               setStatus('ready');
             }
             return;
           }
-
-          if (error) {
-            console.warn('[AudioPostPlayer] Signed URL error:', error.message);
+          if (error && process.env.NODE_ENV !== 'production') {
+            console.warn('[audio] Signed URL error', error.message);
           }
-
-          // Fallback to public URL
           const { data: pubData } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(normalizedPath);
           if (pubData?.publicUrl) {
-            console.log('[AudioPostPlayer] Using public URL:', pubData.publicUrl);
             if (!cancelled) {
               setResolvedSrc(pubData.publicUrl);
               setStatus('ready');
@@ -523,79 +494,66 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
             return;
           }
         } catch (err) {
-          console.error('[AudioPostPlayer] Supabase error:', err);
+          if (process.env.NODE_ENV !== 'production') {
+            console.error('[audio] Supabase error', err);
+          }
         }
       }
 
-      // 5) Manual public URL fallback
-      const manualUrl = buildPublicStorageUrl(normalizedPath);
-      console.log('[AudioPostPlayer] Manual public URL fallback:', manualUrl);
-      if (manualUrl && !cancelled) {
-        setResolvedSrc(manualUrl);
-        setStatus('ready');
+      const manual = buildPublicStorageUrl(normalizedPath);
+      if (manual) {
+        if (!cancelled) {
+          setResolvedSrc(manual);
+          setStatus('ready');
+        }
         return;
       }
 
-      // 6) Nothing worked
-      console.error('[AudioPostPlayer] All URL resolution methods failed');
       if (!cancelled) {
         setStatus('error');
         setErrorMessage('Could not load audio');
       }
     };
 
-    setStatus('loading');
-    setErrorMessage(null);
-    resolveUrl();
+    void tryResolve();
 
     return () => {
       cancelled = true;
     };
-  }, [audioUrl, storagePath]);
+  }, [audioUrl, storagePath, basePath]);
 
   const mimeType = guessAudioMimeType(resolvedSrc || storagePath || audioUrl) || 'audio/mpeg';
+  const playbackSrc =
+    resolvedSrc ||
+    (audioUrl && isHttpUrl(audioUrl) ? audioUrl : null) ||
+    buildPublicStorageUrl(normalizeStoragePath(storagePath || audioUrl)) ||
+    '';
 
-  console.log('[AudioPostPlayer] Render state:', { resolvedSrc, status, mimeType });
-
-  // ALWAYS render the audio element - never hide it
   return (
-    <div style={{ width: '100%', maxWidth: '320px', minHeight: '54px' }}>
+    <div style={{ width: '100%', maxWidth: '320px', minHeight: '56px' }}>
+      <audio
+        key={playbackSrc || 'audio-empty'}
+        controls
+        preload="metadata"
+        playsInline
+        controlsList={isReader ? 'nodownload' : undefined}
+        style={{ width: '100%', display: 'block' }}
+        src={playbackSrc || undefined}
+        onLoadedMetadata={() => setStatus('ready')}
+        onPlay={() => setStatus('ready')}
+        onError={() => {
+          setStatus('error');
+          setErrorMessage('Audio failed to play');
+        }}
+      >
+        {playbackSrc ? <source src={playbackSrc} type={mimeType} /> : null}
+        Your browser does not support audio.
+      </audio>
       {status === 'loading' && (
-        <div style={{ padding: '8px 0', color: 'rgba(0,0,0,0.5)', fontSize: '13px' }}>
-          Loading audio…
-        </div>
+        <div style={{ padding: '6px 0', color: 'rgba(0,0,0,0.6)', fontSize: '13px' }}>Loading audio…</div>
       )}
       {status === 'error' && (
-        <div style={{ padding: '8px 0', color: '#c44', fontSize: '13px' }}>
-          {errorMessage || 'Audio failed to load'}
-        </div>
-      )}
-      {/* Always render audio element when we have a src */}
-      {resolvedSrc && (
-        <audio
-          key={resolvedSrc}
-          controls
-          controlsList={isReader ? 'nodownload' : undefined}
-          preload="metadata"
-          playsInline
-          style={{ width: '100%', display: 'block' }}
-          onLoadedMetadata={() => console.log('[AudioPostPlayer] onLoadedMetadata')}
-          onPlay={() => console.log('[AudioPostPlayer] onPlay')}
-          onError={(e) => {
-            console.error('[AudioPostPlayer] onError:', e);
-            setStatus('error');
-            setErrorMessage('Playback failed');
-          }}
-        >
-          <source src={resolvedSrc} type={mimeType} />
-          Your browser does not support audio.
-        </audio>
-      )}
-      {/* Debug info in dev */}
-      {process.env.NODE_ENV !== 'production' && (
-        <div style={{ fontSize: '10px', color: '#888', wordBreak: 'break-all', marginTop: '4px' }}>
-          src: {resolvedSrc || 'none'} | status: {status}
-        </div>
+        <div style={{ padding: '6px 0', color: '#c44', fontSize: '13px' }}>{errorMessage || 'Audio failed to load'}</div>
       )}
     </div>
   );
