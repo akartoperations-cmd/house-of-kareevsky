@@ -1079,7 +1079,7 @@ export default function HomePage() {
     if (permApi?.query) {
       permApi
         .query({ name: 'notifications' as PermissionName })
-        .then((status) => {
+        .then((status: PermissionStatus) => {
           permStatus = status;
           setPushPermission(status.state as NotificationPermission);
           status.onchange = () => setPushPermission(status.state as NotificationPermission);
