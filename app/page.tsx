@@ -416,6 +416,7 @@ const guessAudioMimeType = (value?: string | null) => {
   if (!value) return undefined;
   const clean = (value.split('?')[0] || '').toLowerCase();
   if (clean.endsWith('.mp3')) return 'audio/mpeg';
+  if (clean.endsWith('.mp3')) return 'audio/mp3';
   if (clean.endsWith('.m4a') || clean.endsWith('.mp4') || clean.endsWith('.aac')) return 'audio/mp4';
   if (clean.endsWith('.wav')) return 'audio/wav';
   if (clean.endsWith('.ogg') || clean.endsWith('.oga')) return 'audio/ogg';
@@ -433,6 +434,7 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
   const [resolvedSrc, setResolvedSrc] = useState<string | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [normalizedPathState, setNormalizedPathState] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -448,6 +450,7 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
     setResolvedSrc(null);
     setStatus('loading');
     setErrorMessage(null);
+    setNormalizedPathState(null);
 
     if (!preferred) {
       setErrorState('Audio file is not available');
@@ -456,6 +459,7 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
 
     if (isHttpUrl(preferred)) {
       if (cancelled) return;
+      setNormalizedPathState(null);
       setResolvedSrc(preferred);
       setStatus('ready');
       return;
@@ -472,6 +476,7 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
       setErrorState('Audio file is not available');
       return;
     }
+    setNormalizedPathState(normalizedPath);
 
     (async () => {
       try {
@@ -502,7 +507,7 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
 
         if (!cancelled) {
           if (process.env.NODE_ENV !== 'production') {
-            console.debug('[audio] Resolved playback URL', { path: normalizedPath });
+            console.debug('[audio] Resolved playback URL', { path: normalizedPath, url: nextUrl });
           }
           setResolvedSrc(nextUrl);
           setStatus('ready');
@@ -520,45 +525,47 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
     };
   }, [audioUrl, storagePath]);
 
-  const mimeType = useMemo(
-    () => guessAudioMimeType(resolvedSrc || audioUrl || storagePath),
-    [resolvedSrc, audioUrl, storagePath],
-  );
+  const fallbackPublic = useMemo(() => buildPublicStorageUrl(normalizedPathState), [normalizedPathState]);
+  const bestSrc = resolvedSrc || (isHttpUrl(audioUrl) ? audioUrl : null) || fallbackPublic || '';
+  const mimeType = useMemo(() => guessAudioMimeType(bestSrc || audioUrl || storagePath), [bestSrc, audioUrl, storagePath]);
 
-  if (status === 'error') {
-    return (
-      <div className="message__caption" style={{ padding: '8px 0' }}>
-        {errorMessage || 'Audio failed to load'}
-      </div>
-    );
-  }
-
-  if (!resolvedSrc || status === 'loading') {
-    return (
-      <div className="message__caption" style={{ padding: '8px 0' }}>
-        Loading audio…
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'production') {
+      console.info('[audio] Rendering audio element', { src: bestSrc, status, normalizedPath: normalizedPathState });
+    }
+  }, [bestSrc, status, normalizedPathState]);
 
   return (
-    <audio
-      key={resolvedSrc}
-      controls
-      controlsList={isReader ? 'nodownload' : undefined}
-      preload="metadata"
-      playsInline
-      style={{ width: '100%', maxWidth: '320px' }}
-      onLoadedData={() => setStatus('ready')}
-      onCanPlay={() => setStatus('ready')}
-      onError={() => {
-        setStatus('error');
-        setErrorMessage('Audio failed to load');
-      }}
-    >
-      <source src={resolvedSrc} type={mimeType} />
-      Your browser does not support the audio element.
-    </audio>
+    <div style={{ width: '100%', maxWidth: '320px' }}>
+      <audio
+        key={bestSrc || 'audio-empty'}
+        controls
+        controlsList={isReader ? 'nodownload' : undefined}
+        preload="metadata"
+        playsInline
+        style={{ width: '100%' }}
+        src={bestSrc || undefined}
+        onLoadedData={() => setStatus('ready')}
+        onCanPlay={() => setStatus('ready')}
+        onError={() => {
+          setStatus('error');
+          setErrorMessage('Audio failed to load');
+        }}
+      >
+        {bestSrc ? <source src={bestSrc} type={mimeType} /> : null}
+        Your browser does not support the audio element.
+      </audio>
+      {status === 'loading' && (
+        <div className="message__caption" style={{ padding: '6px 0' }}>
+          Loading audio…
+        </div>
+      )}
+      {status === 'error' && (
+        <div className="message__caption" style={{ padding: '6px 0' }}>
+          {errorMessage || 'Audio failed to load'}
+        </div>
+      )}
+    </div>
   );
 }
 
