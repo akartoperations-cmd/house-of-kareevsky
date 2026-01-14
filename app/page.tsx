@@ -455,7 +455,7 @@ const mapCommentRow = (row: CommentRow, adminUserId?: string | null): Comment =>
     text: row.body_text || '',
     userId: row.user_id || null,
     postId: row.post_id || null,
-    updatedAt: row.updated_at || null,
+    updatedAt: row.updated_at ?? undefined,
   };
 };
 
@@ -470,7 +470,7 @@ const mapDirectMessageRow = (row: DirectMessageRow, adminUserId?: string | null)
     text: row.body_text || '',
     fromUserId: row.from_user_id || null,
     toAdminId: row.to_admin_id || null,
-    updatedAt: row.updated_at || null,
+    updatedAt: row.updated_at ?? undefined,
   };
 };
 
