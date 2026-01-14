@@ -832,6 +832,13 @@ export default function HomePage() {
   const [showPushPrompt, setShowPushPrompt] = useState(false);
   const [isPushPrompting, setIsPushPrompting] = useState(false);
   const [showInstallInstructions, setShowInstallInstructions] = useState(false);
+  const refreshPushPermission = useCallback(() => {
+    if (typeof Notification === 'undefined') {
+      setPushPermission('unsupported');
+      return;
+    }
+    setPushPermission(Notification.permission);
+  }, []);
   const pendingScrollToBottom = useRef(false);
   const forceScrollToBottom = useRef(false);
   const bodyOverflowRef = useRef<string | null>(null);
@@ -1785,14 +1792,6 @@ export default function HomePage() {
 
   const closeInstallInstructions = useCallback(() => {
     setShowInstallInstructions(false);
-  }, []);
-
-  const refreshPushPermission = useCallback(() => {
-    if (typeof Notification === 'undefined') {
-      setPushPermission('unsupported');
-      return;
-    }
-    setPushPermission(Notification.permission);
   }, []);
 
   const handlePushNotNow = useCallback(() => {
