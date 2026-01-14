@@ -551,7 +551,7 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
     return () => {
       cancelled = true;
     };
-  }, [audioUrl, storagePath, basePath]);
+  }, [audioUrl, storagePath]);
 
   const mimeType = guessAudioMimeType(resolvedSrc || storagePath || audioUrl) || 'audio/mpeg';
   const playbackSrc =
