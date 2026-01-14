@@ -29,6 +29,23 @@ import {
 } from './lib/mediaProvider';
 import { useAccessRedirect } from './lib/useAccessRedirect';
 
+declare global {
+  interface Window {
+    OneSignalDeferred?: Array<(OneSignal: any) => void>;
+  }
+}
+
+type PushEventPayload = {
+  eventType: 'admin_new_post' | 'admin_dm_to_user' | 'user_dm_to_admin' | 'new_comment_to_admin';
+  postId?: string;
+  toUserId?: string | null;
+  messageText?: string;
+  commentText?: string;
+  deepLink?: string;
+};
+
+const PUSH_NOT_NOW_KEY = 'push-not-now-until';
+
 type AdminMessage = {
   id: string;
   author: 'Kareevsky';
@@ -166,6 +183,20 @@ type PostRow = {
 type PostMediaWithUrl = PostMediaRow & { url?: string };
 
 const ADMIN_USER_ID = process.env.NEXT_PUBLIC_ADMIN_USER_ID || null;
+
+const triggerPushEvent = async (payload: PushEventPayload) => {
+  try {
+    await fetch('/api/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('[push] Failed to trigger push event', err);
+    }
+  }
+};
 
 const readImageDimensions = (file: File): Promise<{ width?: number; height?: number }> =>
   new Promise((resolve) => {
@@ -797,6 +828,9 @@ export default function HomePage() {
   const [isIosBrowser, setIsIosBrowser] = useState(false);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [installBannerDismissed, setInstallBannerDismissed] = useState(false);
+  const [pushPermission, setPushPermission] = useState<NotificationPermission | 'unsupported'>('default');
+  const [showPushPrompt, setShowPushPrompt] = useState(false);
+  const [isPushPrompting, setIsPushPrompting] = useState(false);
   const [showInstallInstructions, setShowInstallInstructions] = useState(false);
   const pendingScrollToBottom = useRef(false);
   const forceScrollToBottom = useRef(false);
@@ -989,6 +1023,25 @@ export default function HomePage() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    const externalId = user?.id || null;
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    window.OneSignalDeferred.push(async (OneSignal) => {
+      try {
+        if (externalId) {
+          await OneSignal.login(externalId);
+        } else if (OneSignal.logout) {
+          await OneSignal.logout();
+        }
+      } catch (err) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[push] OneSignal login/logout failed', err);
+        }
+      }
+    });
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
     if (!('serviceWorker' in navigator)) return;
     navigator.serviceWorker.register('/sw.js').catch(() => {
       // Registration is best-effort; offline caching can be added later.
@@ -1011,6 +1064,47 @@ export default function HomePage() {
       setShowInstallBanner(true);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      setPushPermission('unsupported');
+      return;
+    }
+
+    refreshPushPermission();
+
+    const permApi = (navigator as any)?.permissions;
+    let permStatus: PermissionStatus | null = null;
+
+    if (permApi?.query) {
+      permApi
+        .query({ name: 'notifications' as PermissionName })
+        .then((status) => {
+          permStatus = status;
+          setPushPermission(status.state as NotificationPermission);
+          status.onchange = () => setPushPermission(status.state as NotificationPermission);
+        })
+        .catch(() => {
+          // ignore
+        });
+    }
+
+    return () => {
+      if (permStatus) permStatus.onchange = null;
+    };
+  }, [refreshPushPermission]);
+
+  useEffect(() => {
+    if (pushPermission === 'granted' || pushPermission === 'unsupported') {
+      setShowPushPrompt(false);
+      return;
+    }
+    if (typeof window === 'undefined') return;
+    const dismissedUntil = Number(window.localStorage.getItem(PUSH_NOT_NOW_KEY) || '0');
+    if (!dismissedUntil || Date.now() > dismissedUntil) {
+      setShowPushPrompt(true);
+    }
+  }, [pushPermission]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1349,6 +1443,14 @@ export default function HomePage() {
     setCurrentImageAspect(null);
   }, [photoViewer?.index, photoViewer?.images]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const href = window.location.href;
+    if (href.includes('open=')) {
+      handleDeepLink(href);
+    }
+  }, [handleDeepLink]);
+
   const queueScrollToBottom = useCallback(
     (options?: { force?: boolean }) => {
       pendingScrollToBottom.current = true;
@@ -1357,6 +1459,38 @@ export default function HomePage() {
       }
     },
     [],
+  );
+
+  const handleDeepLink = useCallback(
+    (link: string | null | undefined) => {
+      if (typeof window === 'undefined' || !link) return;
+      const url = new URL(link, window.location.origin);
+      const open = url.searchParams.get('open');
+
+      if (open === 'latest') {
+        setActiveView('home');
+        queueScrollToBottom({ force: true });
+        return;
+      }
+
+      if (open === 'post') {
+        const pid = url.searchParams.get('postId');
+        if (pid) {
+          setActiveView('home');
+          setActiveMessageId(pid);
+          setCommentsModalOpen(true);
+        }
+        return;
+      }
+
+      const path = url.pathname || '/';
+      if (path.includes('/messages')) {
+        setActiveView('write');
+      } else if (path.includes('/admin/messages')) {
+        setActiveView('write');
+      }
+    },
+    [queueScrollToBottom],
   );
 
   useEffect(() => {
@@ -1653,6 +1787,43 @@ export default function HomePage() {
     setShowInstallInstructions(false);
   }, []);
 
+  const refreshPushPermission = useCallback(() => {
+    if (typeof Notification === 'undefined') {
+      setPushPermission('unsupported');
+      return;
+    }
+    setPushPermission(Notification.permission);
+  }, []);
+
+  const handlePushNotNow = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    const until = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    window.localStorage.setItem(PUSH_NOT_NOW_KEY, String(until));
+    setShowPushPrompt(false);
+  }, []);
+
+  const handlePushEnable = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    setIsPushPrompting(true);
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    window.OneSignalDeferred.push(async (OneSignal) => {
+      try {
+        if (OneSignal?.Notifications?.requestPermission) {
+          await OneSignal.Notifications.requestPermission();
+        } else if (OneSignal?.showNativePrompt) {
+          await OneSignal.showNativePrompt();
+        }
+      } catch (err) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[push] Permission prompt failed', err);
+        }
+      } finally {
+        setIsPushPrompting(false);
+        refreshPushPermission();
+      }
+    });
+  }, [refreshPushPermission]);
+
   const handleInstallClick = useCallback(async () => {
     if (isStandalone) return;
     if (isIosBrowser || !installPromptEvent) {
@@ -1767,6 +1938,14 @@ export default function HomePage() {
       }
       showToast('Message sent.');
       setWriteText('');
+
+      if (!isAdmin) {
+        triggerPushEvent({
+          eventType: 'user_dm_to_admin',
+          messageText: text,
+          deepLink: '/admin/messages',
+        });
+      }
     } catch (err) {
       console.error('[data] Failed to send direct message', err);
       showToast('Failed to send message. Please try again.');
@@ -1935,9 +2114,16 @@ export default function HomePage() {
           .select()
           .single();
         if (error) throw error;
+        const newPostId = (data as PostRow).id;
         const mapped = mapPostRowToMessage({ ...(data as PostRow), post_media: [], comments: [] }, adminUserIdRef.current);
         setFeedMessages((prev) => [...prev, mapped]);
         queueScrollToBottom({ force: true });
+        triggerPushEvent({
+          eventType: 'admin_new_post',
+          postId: newPostId,
+          messageText: createTextTitle.trim() || createTextBody.trim(),
+          deepLink: '/?open=latest',
+        });
         showToast('Text post published.');
         setCreateTextTitle('');
         setCreateTextBody('');
@@ -2021,6 +2207,12 @@ export default function HomePage() {
           );
           setFeedMessages((prev) => [...prev, mapped]);
           queueScrollToBottom({ force: true });
+          triggerPushEvent({
+            eventType: 'admin_new_post',
+            postId: newPostId as string,
+            messageText: mediaCaption.trim() || null,
+            deepLink: '/?open=latest',
+          });
           showToast(mediaIsVideo ? 'Video post published.' : `Photo post with ${uploads.length} image(s) published.`);
           setMediaFiles([]);
           setMediaPreviews([]);
@@ -2108,6 +2300,12 @@ export default function HomePage() {
           );
           setFeedMessages((prev) => [...prev, mapped]);
           queueScrollToBottom({ force: true });
+          triggerPushEvent({
+            eventType: 'admin_new_post',
+            postId: newPostId as string,
+            messageText: audioFile.name || 'Audio post',
+            deepLink: '/?open=latest',
+          });
           showToast('Audio post published.');
           resetAudioSelection();
         } catch (err) {
@@ -2136,6 +2334,12 @@ export default function HomePage() {
         const mapped = mapPostRowToMessage({ ...(data as PostRow), post_media: [], comments: [] }, adminUserIdRef.current);
         setFeedMessages((prev) => [...prev, mapped]);
         queueScrollToBottom({ force: true });
+        triggerPushEvent({
+          eventType: 'admin_new_post',
+          postId: (data as PostRow).id,
+          messageText: pollQuestion.trim(),
+          deepLink: '/?open=latest',
+        });
         showToast('Poll published.');
         setPollQuestion('');
         setPollOptions(['', '']);
@@ -2168,6 +2372,12 @@ export default function HomePage() {
           const mapped = mapPostRowToMessage({ ...(data as PostRow), post_media: [], comments: [] }, adminUserIdRef.current);
           setFeedMessages((prev) => [...prev, mapped]);
           queueScrollToBottom({ force: true });
+          triggerPushEvent({
+            eventType: 'admin_new_post',
+            postId: (data as PostRow).id,
+            messageText: english ? english[1] : 'New post',
+            deepLink: '/?open=latest',
+          });
           showToast('Multi-language post published.');
           setI18nTexts({ en: '', es: '', fr: '', it: '' });
         } else {
@@ -2207,6 +2417,12 @@ export default function HomePage() {
           const mapped = mapPostRowToMessage({ ...(data as PostRow), post_media: [], comments: [] }, adminUserIdRef.current);
           setFeedMessages((prev) => [...prev, mapped]);
           queueScrollToBottom({ force: true });
+          triggerPushEvent({
+            eventType: 'admin_new_post',
+            postId: (data as PostRow).id,
+            messageText: 'New media post',
+            deepLink: '/?open=latest',
+          });
           showToast('Multi-language post published.');
           setI18nFiles({ en: [], es: [], fr: [], it: [] });
           setI18nPreviews({ en: [], es: [], fr: [], it: [] });
@@ -2255,7 +2471,7 @@ export default function HomePage() {
   };
 
   const handleSendComment = async () => {
-    if (!isAdmin || !activeMessageId) return;
+    if (!activeMessageId) return;
     const text = commentReply.trim();
     if (!text) return;
 
@@ -2276,6 +2492,10 @@ export default function HomePage() {
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const userId = sessionData?.session?.user?.id ?? null;
+      if (!userId) {
+        showToast('Sign in to comment.');
+        return;
+      }
       const { data, error } = await supabase
         .from('comments')
         .insert({
@@ -2296,6 +2516,15 @@ export default function HomePage() {
       });
       setCommentReply('');
       showToast('Reply published.');
+
+      if (!isAdmin) {
+        triggerPushEvent({
+          eventType: 'new_comment_to_admin',
+          postId: activeMessageId,
+          commentText: text,
+          deepLink: activeMessageId ? `/?open=post&postId=${activeMessageId}` : undefined,
+        });
+      }
     } catch (err) {
       console.error('[data] Failed to send comment', err);
       showToast('Failed to send comment.');
@@ -2381,16 +2610,16 @@ export default function HomePage() {
         })}
         <textarea
           className="write-view__textarea"
-          placeholder={isAdmin ? "What's on your mind..." : 'Sign in as admin to write.'}
+          placeholder={session ? "What's on your mind..." : 'Sign in to write.'}
           value={writeText}
           onChange={(e) => {
-            if (!isAdmin) return;
+            if (!session) return;
             setWriteText(e.target.value);
           }}
-          disabled={!isAdmin}
+          disabled={!session}
         />
       </div>
-      {isAdmin && (
+      {session && (
         <div className="write-view__footer">
           <button className="write-view__send" onClick={sendMessage}>
             Send
@@ -3210,6 +3439,70 @@ export default function HomePage() {
       />
       {renderView()}
 
+      {showPushPrompt && pushPermission !== 'granted' && (
+        <div
+          className="push-banner"
+          style={{
+            position: 'fixed',
+            bottom: '16px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 80,
+            maxWidth: '520px',
+            width: 'calc(100% - 24px)',
+            background: 'rgba(0,0,0,0.9)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: '12px',
+            padding: '12px 14px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            boxShadow: '0 12px 24px rgba(0,0,0,0.35)',
+          }}
+        >
+          <div style={{ color: 'white', fontSize: '14px', lineHeight: 1.4, fontFamily: 'var(--font-ui)' }}>
+            Enable notifications?
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={handlePushEnable}
+              disabled={isPushPrompting}
+              className="button"
+              style={{
+                background: 'white',
+                color: 'black',
+                padding: '8px 12px',
+                borderRadius: '10px',
+                fontWeight: 600,
+                fontSize: '13px',
+                border: 'none',
+                cursor: 'pointer',
+                opacity: isPushPrompting ? 0.6 : 1,
+              }}
+            >
+              {isPushPrompting ? 'Loading…' : 'Enable'}
+            </button>
+            <button
+              onClick={handlePushNotNow}
+              className="button"
+              style={{
+                background: 'rgba(255,255,255,0.08)',
+                color: 'white',
+                padding: '8px 12px',
+                borderRadius: '10px',
+                fontWeight: 500,
+                fontSize: '13px',
+                border: '1px solid rgba(255,255,255,0.1)',
+                cursor: 'pointer',
+              }}
+            >
+              Not now
+            </button>
+          </div>
+        </div>
+      )}
+
       {menuOpen && (
         <>
           <div className="backdrop" onClick={closeMenu} />
@@ -3235,6 +3528,19 @@ export default function HomePage() {
                   Installed
                 </button>
               )}
+              <button
+                className="bottom-sheet__item"
+                onClick={() => {
+                  if (typeof window !== 'undefined') {
+                    window.localStorage.removeItem(PUSH_NOT_NOW_KEY);
+                  }
+                  setShowPushPrompt(true);
+                  setMenuOpen(false);
+                }}
+              >
+                <span className="bottom-sheet__icon">{Icons.refresh}</span>
+                Notifications
+              </button>
               <button className="bottom-sheet__item" onClick={() => navigateTo('gallery')}>
                 <span className="bottom-sheet__icon">{Icons.gallery}</span>
                 Gallery
