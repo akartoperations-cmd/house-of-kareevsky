@@ -30,6 +30,8 @@ export interface Message {
   type: 'photo' | 'text' | 'sticker' | 'poll' | 'i18n' | 'video' | 'audio';
   time: string;
   createdAt?: string;
+  updatedAt?: string | null;
+  authorId?: string | null;
   isTest?: boolean;
   imageUrl?: string;
   images?: string[];
@@ -41,6 +43,10 @@ export interface Message {
   caption?: string; // For photo posts
   pollQuestion?: string;
   pollOptions?: string[];
+  pollId?: string;
+  pollOptionStats?: { id: string; text: string; votes: number }[];
+  pollTotalVotes?: number;
+  pollUserVoteOptionId?: string | null;
   i18nPack?: I18nPack; // Multi-language content
 }
 
@@ -55,6 +61,9 @@ export interface Comment {
   id: string;
   author: string;
   text: string;
+  userId?: string | null;
+  postId?: string | null;
+  updatedAt?: string | null;
 }
 
 // Photos of the day
@@ -265,6 +274,9 @@ export interface PersonalMessage {
   text: string;
   createdAt?: string;
   date?: string;
+  fromUserId?: string | null;
+  toAdminId?: string | null;
+  updatedAt?: string | null;
 }
 
 export const personalThread: PersonalMessage[] = [

@@ -180,6 +180,30 @@ type PostRow = {
 
 type PostMediaWithUrl = PostMediaRow & { url?: string };
 
+type PollOptionRow = {
+  id: string;
+  poll_id?: string | null;
+  option_text?: string | null;
+  poll_votes?: { count: number | null }[] | null;
+};
+
+type PollRow = {
+  id: string;
+  post_id?: string | null;
+  question?: string | null;
+  poll_options?: PollOptionRow[] | null;
+};
+
+type PollOptionStats = { id: string; text: string; votes: number };
+type PollMessageData = {
+  pollId: string;
+  question: string;
+  options: PollOptionStats[];
+  totalVotes: number;
+  userVoteOptionId: string | null;
+};
+type PollDataByPostId = Record<string, PollMessageData>;
+
 const ADMIN_USER_ID = process.env.NEXT_PUBLIC_ADMIN_USER_ID || null;
 
 const triggerPushEvent = async (payload: PushEventPayload) => {
@@ -339,7 +363,11 @@ const coerceMessageType = (value: string): Message['type'] => {
   return allowed.includes(value as Message['type']) ? (value as Message['type']) : 'text';
 };
 
-const mapPostRowToMessage = (row: PostRow, adminUserId?: string | null): Message => {
+const mapPostRowToMessage = (
+  row: PostRow,
+  adminUserId?: string | null,
+  pollDataByPostId?: PollDataByPostId,
+): Message => {
   const meta = (row.metadata as Record<string, unknown> | null) || {};
   const typedMedia = ((row.post_media as PostMediaWithUrl[] | null | undefined) || []).filter(Boolean);
   const mediaImages = typedMedia.filter((m) => m.media_type === 'image').map((m) => m.url || m.storage_path);
@@ -351,8 +379,9 @@ const mapPostRowToMessage = (row: PostRow, adminUserId?: string | null): Message
         [];
   const messageType = coerceMessageType(row.type);
   const i18nPack = meta.i18n_pack as I18nPack | undefined;
-  const pollQuestion = meta.poll_question as string | undefined;
-  const pollOptions = meta.poll_options as string[] | undefined;
+  const pollData = pollDataByPostId?.[row.id];
+  const pollQuestion = pollData?.question || (meta.poll_question as string | undefined);
+  const pollOptions = pollData ? pollData.options.map((o) => o.text) : (meta.poll_options as string[] | undefined);
   const caption = meta.caption as string | undefined;
   const subtitle = meta.subtitle as string | undefined;
   const videoMedia = typedMedia.find((m) => m.media_type === 'video');
@@ -381,6 +410,10 @@ const mapPostRowToMessage = (row: PostRow, adminUserId?: string | null): Message
     subtitle,
     pollQuestion,
     pollOptions,
+    pollId: pollData?.pollId || (meta.poll_id as string | undefined),
+    pollOptionStats: pollData?.options,
+    pollTotalVotes: pollData?.totalVotes ?? (pollData ? 0 : undefined),
+    pollUserVoteOptionId: pollData ? pollData.userVoteOptionId : null,
     i18nPack,
   };
 
@@ -793,6 +826,7 @@ export default function HomePage() {
   const [emojiPanelOpen, setEmojiPanelOpen] = useState<string | null>(null);
   const [reactions, setReactions] = useState<ReactionsMap>({});
   const [bookmarks, setBookmarks] = useState<BookmarksMap>({});
+  const [pollVoteLoadingById, setPollVoteLoadingById] = useState<Record<string, boolean>>({});
   const [adminInbox, setAdminInbox] = useState<AdminInboxState>({ hasUnread: false, count: 0 });
 
   const [writeText, setWriteText] = useState('');
@@ -1319,6 +1353,76 @@ export default function HomePage() {
     };
   }, [installBannerDismissed, isStandalone]);
 
+  const loadPollDataForPosts = useCallback(
+    async (supabaseClient: ReturnType<typeof getSupabaseBrowserClient>, posts: PostRow[]): Promise<PollDataByPostId> => {
+      if (!supabaseClient) return {};
+      const pollPosts = posts.filter((row) => coerceMessageType(row.type) === 'poll');
+      if (pollPosts.length === 0) return {};
+
+      const pollPostIds = pollPosts.map((row) => row.id);
+      const { data: pollRows, error: pollError } = await supabaseClient
+        .from('polls')
+        .select(
+          `
+          id,
+          post_id,
+          question,
+          poll_options (
+            id,
+            option_text,
+            poll_votes(count)
+          )
+        `,
+        )
+        .in('post_id', pollPostIds);
+
+      if (pollError) throw pollError;
+
+      const typedPollRows = (pollRows as PollRow[]) || [];
+      const pollIds = typedPollRows.map((p) => p.id).filter(Boolean);
+      let userVotesMap: Record<string, string | null> = {};
+
+      if (currentUserId && pollIds.length > 0) {
+        const { data: userVotes, error: userVotesError } = await supabaseClient
+          .from('poll_votes')
+          .select('poll_id, option_id')
+          .eq('user_id', currentUserId)
+          .in('poll_id', pollIds);
+
+        if (userVotesError) throw userVotesError;
+
+        userVotesMap = (userVotes || []).reduce<Record<string, string | null>>((acc, vote) => {
+          const pollId = (vote as { poll_id?: string }).poll_id;
+          const optionId = (vote as { option_id?: string }).option_id;
+          if (pollId) {
+            acc[pollId] = optionId || null;
+          }
+          return acc;
+        }, {});
+      }
+
+      const pollMap: PollDataByPostId = {};
+      typedPollRows.forEach((poll) => {
+        if (!poll.post_id) return;
+        const options = (poll.poll_options || []).map<PollOptionStats>((opt) => {
+          const countValue = opt.poll_votes && opt.poll_votes[0] ? Number(opt.poll_votes[0].count || 0) : 0;
+          return { id: opt.id, text: opt.option_text || '', votes: Number.isFinite(countValue) ? countValue : 0 };
+        });
+        const totalVotes = options.reduce((sum, opt) => sum + (opt.votes || 0), 0);
+        pollMap[poll.post_id] = {
+          pollId: poll.id,
+          question: poll.question || '',
+          options,
+          totalVotes,
+          userVoteOptionId: userVotesMap[poll.id] ?? null,
+        };
+      });
+
+      return pollMap;
+    },
+    [currentUserId],
+  );
+
   const refreshFeed = useCallback(
     async (reason: 'initial' | 'manual' | 'pull' = 'manual') => {
       if (loadingPostsRef.current) return;
@@ -1393,8 +1497,16 @@ export default function HomePage() {
           }
         } else {
           const rows = ((data as PostRow[]) || []).filter((row) => !row.is_deleted);
+          let pollDataByPostId: PollDataByPostId = {};
+          try {
+            pollDataByPostId = await loadPollDataForPosts(supabase, rows);
+          } catch (pollErr) {
+            console.warn('[data] Failed to load poll data', pollErr);
+          }
           const rowsWithUrls = await resolveMediaForRows(rows);
-          const mapped = rowsWithUrls.map((row) => mapPostRowToMessage(row, adminUserIdRef.current));
+          const mapped = rowsWithUrls.map((row) =>
+            mapPostRowToMessage(row, adminUserIdRef.current, pollDataByPostId),
+          );
           const commentMap: Record<string, Comment[]> = {};
           rowsWithUrls.forEach((row) => {
             const mappedComments = (row.comments || [])
@@ -1421,7 +1533,7 @@ export default function HomePage() {
         }
       }
     },
-    [showToast],
+    [showToast, loadPollDataForPosts],
   );
 
   useEffect(() => {
@@ -1948,6 +2060,81 @@ export default function HomePage() {
   const selectReaction = (messageId: string, emoji: string) => {
     setReactions((prev) => ({ ...prev, [messageId]: emoji }));
     setEmojiPanelOpen(null);
+  };
+
+  const voteOnPollOption = async (pollId: string, optionId: string) => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      showToast('Supabase is not configured.');
+      return;
+    }
+
+    if (!currentUserId) {
+      showToast('Please sign in to vote.');
+      return;
+    }
+
+    const targetMessage = feedMessages.find((m) => m.pollId === pollId);
+    if (targetMessage?.pollUserVoteOptionId) {
+      showToast('You already voted.');
+      return;
+    }
+
+    if (pollVoteLoadingById[pollId]) return;
+    setPollVoteLoadingById((prev) => ({ ...prev, [pollId]: true }));
+
+    try {
+      const { error } = await supabase.from('poll_votes').insert({
+        poll_id: pollId,
+        option_id: optionId,
+        user_id: currentUserId,
+      });
+
+      if (error) {
+        const duplicate =
+          (error as { code?: string; message?: string }).code === '23505' ||
+          /duplicate/i.test((error as { message?: string }).message || '');
+        if (duplicate) {
+          showToast('You already voted.');
+        } else {
+          throw error;
+        }
+      } else {
+        setFeedMessages((prev) =>
+          prev.map((m) => {
+            if (m.pollId !== pollId) return m;
+            const fallbackOptions =
+              m.pollOptionStats && m.pollOptionStats.length > 0
+                ? m.pollOptionStats
+                : (m.pollOptions || []).map((text, idx) => ({
+                    id: `${m.id}-${idx}`,
+                    text,
+                    votes: 0,
+                  }));
+            const updatedOptions = fallbackOptions.map((opt) =>
+              opt.id === optionId ? { ...opt, votes: (opt.votes || 0) + 1 } : opt,
+            );
+            const totalVotes = (m.pollTotalVotes || 0) + 1;
+            return {
+              ...m,
+              pollOptionStats: updatedOptions,
+              pollTotalVotes: totalVotes,
+              pollUserVoteOptionId: optionId,
+            };
+          }),
+        );
+        showToast('Vote counted.');
+      }
+    } catch (err) {
+      console.error('[data] Failed to submit vote', err);
+      showToast('Failed to vote. Please try again.');
+    } finally {
+      setPollVoteLoadingById((prev) => {
+        const next = { ...prev };
+        delete next[pollId];
+        return next;
+      });
+    }
   };
 
   const openMenu = () => setMenuOpen(true);
@@ -2625,34 +2812,109 @@ export default function HomePage() {
       } else if (createTab === 'poll') {
         const trimmedOptions = pollOptions.map((o) => o.trim()).filter(Boolean);
         if (!pollQuestion.trim() || trimmedOptions.length < 2) return;
-        const { data, error } = await supabase
-          .from('posts')
-          .insert({
-            author_id: authorId,
-            type: 'poll',
-            body_text: pollQuestion.trim(),
-            visibility: 'public',
-            metadata: {
-              poll_question: pollQuestion.trim(),
-              poll_options: trimmedOptions.slice(0, 4),
-              time_label: timeLabel,
+        let newPostId: string | null = null;
+        let newPollId: string | null = null;
+        try {
+          const { data: postData, error: postError } = await supabase
+            .from('posts')
+            .insert({
+              author_id: authorId,
+              type: 'poll',
+              body_text: pollQuestion.trim(),
+              visibility: 'public',
+              metadata: {
+                poll_question: pollQuestion.trim(),
+                poll_options: trimmedOptions.slice(0, 4),
+                time_label: timeLabel,
+              },
+            })
+            .select()
+            .single();
+          if (postError) throw postError;
+
+          newPostId = (postData as PostRow).id;
+
+          const { data: pollData, error: pollError } = await supabase
+            .from('polls')
+            .insert({
+              post_id: newPostId,
+              question: pollQuestion.trim(),
+              created_by: authorId,
+            })
+            .select()
+            .single();
+          if (pollError) throw pollError;
+
+          newPollId = (pollData as PollRow).id;
+
+          const optionsToInsert = trimmedOptions.slice(0, 4).map((opt) => ({
+            poll_id: newPollId as string,
+            option_text: opt,
+          }));
+
+          const { data: insertedOptions, error: optionsError } = await supabase
+            .from('poll_options')
+            .insert(optionsToInsert)
+            .select();
+          if (optionsError) throw optionsError;
+
+          const { data: updatedPost, error: updateError } = await supabase
+            .from('posts')
+            .update({
+              metadata: {
+                poll_id: newPollId,
+                poll_question: pollQuestion.trim(),
+                poll_options: trimmedOptions.slice(0, 4),
+                time_label: timeLabel,
+              },
+            })
+            .eq('id', newPostId)
+            .select()
+            .single();
+          if (updateError) throw updateError;
+
+          const optionStats: PollOptionStats[] = ((insertedOptions as PollOptionRow[]) || []).map((opt) => ({
+            id: opt.id,
+            text: opt.option_text || '',
+            votes: 0,
+          }));
+
+          const pollDataByPostId: PollDataByPostId = {
+            [newPostId]: {
+              pollId: newPollId as string,
+              question: pollQuestion.trim(),
+              options: optionStats,
+              totalVotes: 0,
+              userVoteOptionId: null,
             },
-          })
-          .select()
-          .single();
-        if (error) throw error;
-        const mapped = mapPostRowToMessage({ ...(data as PostRow), post_media: [], comments: [] }, adminUserIdRef.current);
-        setFeedMessages((prev) => [...prev, mapped]);
-        queueScrollToBottom({ force: true });
-        triggerPushEvent({
-          eventType: 'admin_new_post',
-          postId: (data as PostRow).id,
-          messageText: pollQuestion.trim(),
-          deepLink: '/?open=latest',
-        });
-        showToast('Poll published.');
-        setPollQuestion('');
-        setPollOptions(['', '']);
+          };
+
+          const mapped = mapPostRowToMessage(
+            { ...(updatedPost as PostRow), post_media: [], comments: [] },
+            adminUserIdRef.current,
+            pollDataByPostId,
+          );
+
+          setFeedMessages((prev) => [...prev, mapped]);
+          queueScrollToBottom({ force: true });
+          triggerPushEvent({
+            eventType: 'admin_new_post',
+            postId: newPostId,
+            messageText: pollQuestion.trim(),
+            deepLink: '/?open=latest',
+          });
+          showToast('Poll published.');
+          setPollQuestion('');
+          setPollOptions(['', '']);
+        } catch (pollErr) {
+          if (newPollId) {
+            await supabase.from('polls').delete().eq('id', newPollId);
+          }
+          if (newPostId) {
+            await cleanupPostAndMedia(newPostId, []);
+          }
+          throw pollErr;
+        }
       } else if (createTab === 'languages') {
         const langs: I18nLang[] = ['en', 'es', 'fr', 'it'];
 
@@ -3668,6 +3930,12 @@ export default function HomePage() {
                   onSelectEmoji={(emoji) => selectReaction(message.id, emoji)}
                   onOpenGallery={(images) => openPostGallery(images)}
                   onShowToast={showToast}
+                  onVoteOption={
+                    message.type === 'poll' && message.pollId && message.pollOptionStats?.length
+                      ? (optionId) => voteOnPollOption(message.pollId as string, optionId)
+                      : undefined
+                  }
+                  pollIsVoting={message.pollId ? Boolean(pollVoteLoadingById[message.pollId]) : false}
                 />
               ))}
             </div>
@@ -3882,6 +4150,12 @@ export default function HomePage() {
                       onSelectEmoji={(emoji) => selectReaction(message.id, emoji)}
                       onOpenGallery={(images) => openPostGallery(images)}
                       onShowToast={showToast}
+                      onVoteOption={
+                        message.type === 'poll' && message.pollId
+                          ? (optionId) => voteOnPollOption(message.pollId as string, optionId)
+                          : undefined
+                      }
+                      pollIsVoting={message.pollId ? Boolean(pollVoteLoadingById[message.pollId]) : false}
                     />
                   </div>
                 );
@@ -4548,6 +4822,8 @@ interface MessageBubbleProps {
   onSelectEmoji: (emoji: string) => void;
   onOpenGallery: (images: string[]) => void;
   onShowToast: (text: string, timeoutMs?: number) => void;
+  onVoteOption?: (optionId: string) => void;
+  pollIsVoting?: boolean;
 }
 
 function MessageBubble({
@@ -4562,6 +4838,8 @@ function MessageBubble({
   onSelectEmoji,
   onOpenGallery,
   onShowToast,
+  onVoteOption,
+  pollIsVoting,
 }: MessageBubbleProps) {
   const [i18nSelectedLang, setI18nSelectedLang] = useState<I18nLang>('en');
   const [i18nImageIndex, setI18nImageIndex] = useState(0);
@@ -4779,7 +5057,19 @@ function MessageBubble({
 
   if (message.type === 'poll') {
     const question = message.pollQuestion || '';
-    const options = (message.pollOptions || []).slice(0, 4);
+    const optionStats =
+      message.pollOptionStats && message.pollOptionStats.length > 0
+        ? message.pollOptionStats
+        : (message.pollOptions || []).slice(0, 4).map((text, idx) => ({
+            id: `${message.id}-opt-${idx}`,
+            text,
+            votes: 0,
+          }));
+    const totalVotes =
+      typeof message.pollTotalVotes === 'number'
+        ? message.pollTotalVotes
+        : optionStats.reduce((sum, opt) => sum + (opt.votes || 0), 0);
+    const hasVoted = Boolean(message.pollUserVoteOptionId);
     return (
       <div className="message">
         <div
@@ -4788,16 +5078,39 @@ function MessageBubble({
         >
           <div className="poll__question">{question}</div>
           <div className="poll__options">
-            {options.map((opt) => (
-              <button
-                key={opt}
-                className="poll__option"
-                type="button"
-                onClick={() => onShowToast('Voting will be connected later (mock).')}
-              >
-                {opt}
-              </button>
-            ))}
+            {optionStats.map((opt) => {
+              const percent = totalVotes > 0 ? Math.round((opt.votes / totalVotes) * 100) : 0;
+              const disabled = !onVoteOption || hasVoted || pollIsVoting;
+              const isSelected = hasVoted && message.pollUserVoteOptionId === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  className={`poll__option ${isSelected ? 'poll__option--selected' : ''}`}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => {
+                    if (!onVoteOption) return;
+                    if (hasVoted) {
+                      onShowToast('You already voted.');
+                      return;
+                    }
+                    onVoteOption(opt.id);
+                  }}
+                >
+                  <span className="poll__option-content">
+                    <span>{opt.text}</span>
+                    <span className="poll__option-count">
+                      {totalVotes > 0 ? `${opt.votes} • ${percent}%` : '0'}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="poll__meta">
+            {hasVoted ? 'Thanks for voting • ' : ''}
+            {totalVotes} vote{totalVotes === 1 ? '' : 's'}
+            {pollIsVoting ? ' • Sending…' : ''}
           </div>
           {/* Date shown at bottom-right next to time */}
           <div className="message__meta">
