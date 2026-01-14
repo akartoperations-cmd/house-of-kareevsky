@@ -403,7 +403,7 @@ const mapPostRowToMessage = (
     type: messageType,
     time: (meta.time_label as string | undefined) || formatShortTime(row.created_at || undefined),
     createdAt: row.created_at || undefined,
-    updatedAt: row.updated_at || undefined,
+    updatedAt: row.updated_at ?? undefined,
     authorId: row.author_id || null,
     text: bodyText,
     caption,
