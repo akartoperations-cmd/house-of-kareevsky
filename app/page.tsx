@@ -271,7 +271,10 @@ const resolveMediaWithUrls = async (media: PostMediaRow[] | null | undefined): P
 const resolveMediaForRows = async (rows: PostRow[]): Promise<PostRow[]> => {
   const allMedia = rows.flatMap((row) => row.post_media || []);
   const uniquePaths = Array.from(new Set(allMedia.map((m) => m.storage_path)));
+  
+  console.log('[resolveMediaForRows] Resolving URLs for paths:', uniquePaths);
   const urlMap = await resolvePathsToSignedUrls(uniquePaths, { bucket: MEDIA_BUCKET });
+  console.log('[resolveMediaForRows] URL map result:', Object.fromEntries(urlMap));
 
   return rows.map((row) => ({
     ...row,
@@ -360,6 +363,16 @@ const mapPostRowToMessage = (row: PostRow, adminUserId?: string | null): Message
   if (messageType === 'audio') {
     message.audioUrl = audioUrl;
     message.audioStoragePath = audioStoragePath || undefined;
+    // Debug: log audio mapping
+    console.log('[mapPostRowToMessage] Audio post mapped:', {
+      postId: row.id,
+      audioMediaFound: !!audioMedia,
+      audioMediaUrl: audioMedia?.url,
+      audioMediaStoragePath: audioMedia?.storage_path,
+      metaAudioUrl: meta.audio_url,
+      finalAudioUrl: audioUrl,
+      finalStoragePath: audioStoragePath,
+    });
   }
 
   // Posts authored by the configured admin get an admin flag for downstream UI if needed.
@@ -434,135 +447,154 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
   const [resolvedSrc, setResolvedSrc] = useState<string | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [normalizedPathState, setNormalizedPathState] = useState<string | null>(null);
+
+  // Always log props on mount
+  useEffect(() => {
+    console.log('[AudioPostPlayer] Props received:', { audioUrl, storagePath, isReader });
+  }, [audioUrl, storagePath, isReader]);
 
   useEffect(() => {
     let cancelled = false;
-    const preferred = audioUrl || storagePath;
 
-    const setErrorState = (message: string) => {
-      if (cancelled) return;
-      setResolvedSrc(null);
-      setStatus('error');
-      setErrorMessage(message);
+    const resolveUrl = async () => {
+      console.log('[AudioPostPlayer] Starting URL resolution...', { audioUrl, storagePath });
+
+      // 1) If we already have a valid http URL, use it directly
+      if (audioUrl && isHttpUrl(audioUrl)) {
+        console.log('[AudioPostPlayer] Using existing HTTP audioUrl:', audioUrl);
+        setResolvedSrc(audioUrl);
+        setStatus('ready');
+        return;
+      }
+
+      // 2) Determine the storage path to use
+      const pathToResolve = storagePath || audioUrl;
+      if (!pathToResolve) {
+        console.warn('[AudioPostPlayer] No path available');
+        setStatus('error');
+        setErrorMessage('No audio file path');
+        return;
+      }
+
+      // 3) Normalize the path (remove URL prefixes, bucket name, etc.)
+      const normalizedPath = normalizeStoragePath(pathToResolve);
+      console.log('[AudioPostPlayer] Normalized path:', { original: pathToResolve, normalized: normalizedPath });
+
+      if (!normalizedPath) {
+        console.warn('[AudioPostPlayer] Path normalization failed');
+        setStatus('error');
+        setErrorMessage('Invalid audio path');
+        return;
+      }
+
+      // 4) Try to get Supabase client
+      const supabase = getSupabaseBrowserClient();
+      console.log('[AudioPostPlayer] Supabase client:', supabase ? 'available' : 'NULL');
+
+      if (supabase) {
+        try {
+          // Try signed URL first
+          console.log('[AudioPostPlayer] Requesting signed URL for:', normalizedPath);
+          const { data, error } = await supabase.storage
+            .from(MEDIA_BUCKET)
+            .createSignedUrl(normalizedPath, 3600);
+
+          if (data?.signedUrl) {
+            console.log('[AudioPostPlayer] Got signed URL:', data.signedUrl.slice(0, 100) + '...');
+            if (!cancelled) {
+              setResolvedSrc(data.signedUrl);
+              setStatus('ready');
+            }
+            return;
+          }
+
+          if (error) {
+            console.warn('[AudioPostPlayer] Signed URL error:', error.message);
+          }
+
+          // Fallback to public URL
+          const { data: pubData } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(normalizedPath);
+          if (pubData?.publicUrl) {
+            console.log('[AudioPostPlayer] Using public URL:', pubData.publicUrl);
+            if (!cancelled) {
+              setResolvedSrc(pubData.publicUrl);
+              setStatus('ready');
+            }
+            return;
+          }
+        } catch (err) {
+          console.error('[AudioPostPlayer] Supabase error:', err);
+        }
+      }
+
+      // 5) Manual public URL fallback
+      const manualUrl = buildPublicStorageUrl(normalizedPath);
+      console.log('[AudioPostPlayer] Manual public URL fallback:', manualUrl);
+      if (manualUrl && !cancelled) {
+        setResolvedSrc(manualUrl);
+        setStatus('ready');
+        return;
+      }
+
+      // 6) Nothing worked
+      console.error('[AudioPostPlayer] All URL resolution methods failed');
+      if (!cancelled) {
+        setStatus('error');
+        setErrorMessage('Could not load audio');
+      }
     };
 
-    setResolvedSrc(null);
     setStatus('loading');
     setErrorMessage(null);
-    setNormalizedPathState(null);
-
-    if (!preferred) {
-      setErrorState('Audio file is not available');
-      return;
-    }
-
-    if (isHttpUrl(preferred)) {
-      if (cancelled) return;
-      setNormalizedPathState(null);
-      setResolvedSrc(preferred);
-      setStatus('ready');
-      return;
-    }
-
-    const supabase = getSupabaseBrowserClient();
-    if (!supabase) {
-      setErrorState('Audio failed to load');
-      return;
-    }
-
-    const normalizedPath = normalizeStoragePath(storagePath || audioUrl);
-    if (!normalizedPath) {
-      setErrorState('Audio file is not available');
-      return;
-    }
-    setNormalizedPathState(normalizedPath);
-
-    (async () => {
-      try {
-        const { data, error } = await supabase.storage
-          .from(MEDIA_BUCKET)
-          .createSignedUrl(normalizedPath, SIGNED_URL_TTL_SECONDS);
-        let nextUrl = data?.signedUrl || null;
-
-        if (error && process.env.NODE_ENV !== 'production') {
-          console.warn('[audio] createSignedUrl fallback to public URL', {
-            path: normalizedPath,
-            message: error.message,
-          });
-        }
-
-        if (!nextUrl) {
-          const { data: publicData } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(normalizedPath);
-          nextUrl = publicData?.publicUrl || null;
-        }
-
-        if (!nextUrl) {
-          nextUrl = buildPublicStorageUrl(normalizedPath);
-        }
-
-        if (!nextUrl) {
-          throw new Error('No signed or public URL returned');
-        }
-
-        if (!cancelled) {
-          if (process.env.NODE_ENV !== 'production') {
-            console.debug('[audio] Resolved playback URL', { path: normalizedPath, url: nextUrl });
-          }
-          setResolvedSrc(nextUrl);
-          setStatus('ready');
-        }
-      } catch (err) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.error('[audio] Failed to resolve audio URL', err);
-        }
-        setErrorState('Audio failed to load');
-      }
-    })();
+    resolveUrl();
 
     return () => {
       cancelled = true;
     };
   }, [audioUrl, storagePath]);
 
-  const fallbackPublic = useMemo(() => buildPublicStorageUrl(normalizedPathState), [normalizedPathState]);
-  const bestSrc = resolvedSrc || (isHttpUrl(audioUrl) ? audioUrl : null) || fallbackPublic || '';
-  const mimeType = useMemo(() => guessAudioMimeType(bestSrc || audioUrl || storagePath), [bestSrc, audioUrl, storagePath]);
+  const mimeType = guessAudioMimeType(resolvedSrc || storagePath || audioUrl) || 'audio/mpeg';
 
-  useEffect(() => {
-    if (process.env.NODE_ENV !== 'production') {
-      console.info('[audio] Rendering audio element', { src: bestSrc, status, normalizedPath: normalizedPathState });
-    }
-  }, [bestSrc, status, normalizedPathState]);
+  console.log('[AudioPostPlayer] Render state:', { resolvedSrc, status, mimeType });
 
+  // ALWAYS render the audio element - never hide it
   return (
-    <div style={{ width: '100%', maxWidth: '320px' }}>
-      <audio
-        key={bestSrc || 'audio-empty'}
-        controls
-        controlsList={isReader ? 'nodownload' : undefined}
-        preload="metadata"
-        playsInline
-        style={{ width: '100%' }}
-        src={bestSrc || undefined}
-        onLoadedData={() => setStatus('ready')}
-        onCanPlay={() => setStatus('ready')}
-        onError={() => {
-          setStatus('error');
-          setErrorMessage('Audio failed to load');
-        }}
-      >
-        {bestSrc ? <source src={bestSrc} type={mimeType} /> : null}
-        Your browser does not support the audio element.
-      </audio>
+    <div style={{ width: '100%', maxWidth: '320px', minHeight: '54px' }}>
       {status === 'loading' && (
-        <div className="message__caption" style={{ padding: '6px 0' }}>
+        <div style={{ padding: '8px 0', color: 'rgba(0,0,0,0.5)', fontSize: '13px' }}>
           Loading audio…
         </div>
       )}
       {status === 'error' && (
-        <div className="message__caption" style={{ padding: '6px 0' }}>
+        <div style={{ padding: '8px 0', color: '#c44', fontSize: '13px' }}>
           {errorMessage || 'Audio failed to load'}
+        </div>
+      )}
+      {/* Always render audio element when we have a src */}
+      {resolvedSrc && (
+        <audio
+          key={resolvedSrc}
+          controls
+          controlsList={isReader ? 'nodownload' : undefined}
+          preload="metadata"
+          playsInline
+          style={{ width: '100%', display: 'block' }}
+          onLoadedMetadata={() => console.log('[AudioPostPlayer] onLoadedMetadata')}
+          onPlay={() => console.log('[AudioPostPlayer] onPlay')}
+          onError={(e) => {
+            console.error('[AudioPostPlayer] onError:', e);
+            setStatus('error');
+            setErrorMessage('Playback failed');
+          }}
+        >
+          <source src={resolvedSrc} type={mimeType} />
+          Your browser does not support audio.
+        </audio>
+      )}
+      {/* Debug info in dev */}
+      {process.env.NODE_ENV !== 'production' && (
+        <div style={{ fontSize: '10px', color: '#888', wordBreak: 'break-all', marginTop: '4px' }}>
+          src: {resolvedSrc || 'none'} | status: {status}
         </div>
       )}
     </div>
