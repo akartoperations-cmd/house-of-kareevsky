@@ -4315,6 +4315,9 @@ export default function HomePage() {
                 const postDraftValue = postDrafts[message.id] ?? message.text ?? '';
                 const showPostActionsMenu = (canEditThisPost || canDeleteThisPost) && !isEditingThisPost;
                 const postMenuOpen = postActionsOpenId === message.id;
+                if (postMenuOpen && process.env.NODE_ENV !== 'production') {
+                  console.log('[menu-debug] Rendering menu list for:', message.id);
+                }
                 return (
                   <div key={message.id} className="feed-item">
                     <div className="post-card">
@@ -4340,7 +4343,6 @@ export default function HomePage() {
                           >
                             ⋮
                           </button>
-                          {postMenuOpen && console.log('[menu-debug] Rendering menu list for:', message.id)}
                           {postMenuOpen && (
                             <div className="post-actions-menu__list" role="menu">
                               <button
