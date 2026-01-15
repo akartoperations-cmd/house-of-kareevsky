@@ -1342,9 +1342,14 @@ export default function HomePage() {
 
   const togglePostActionsMenu = useCallback(
     (messageId: string) => {
+      console.log('[menu-debug] togglePostActionsMenu called, messageId:', messageId);
       setCommentActionsOpenId(null);
       setDmActionsOpenId(null);
-      setPostActionsOpenId((prev) => (prev === messageId ? null : messageId));
+      setPostActionsOpenId((prev) => {
+        const next = prev === messageId ? null : messageId;
+        console.log('[menu-debug] postActionsOpenId changing:', prev, '->', next);
+        return next;
+      });
     },
     [],
   );
@@ -1384,6 +1389,15 @@ export default function HomePage() {
       adminUserIdRef.current = user.id;
     }
   }, [access.isAdmin, session, user]);
+
+  // DEBUG: expose admin state globally
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).__DEBUG_IS_ADMIN = isAdmin;
+      (window as any).__DEBUG_CURRENT_USER_ID = currentUserId;
+      console.log('[auth-debug] isAdmin:', isAdmin, 'currentUserId:', currentUserId);
+    }
+  }, [isAdmin, currentUserId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -4319,12 +4333,14 @@ export default function HomePage() {
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
+                              console.log('[menu-debug] Trigger clicked, postMenuOpen before:', postMenuOpen, 'messageId:', message.id);
                               togglePostActionsMenu(message.id);
                             }}
                             onPointerDown={(e) => e.stopPropagation()}
                           >
                             ⋮
                           </button>
+                          {postMenuOpen && console.log('[menu-debug] Rendering menu list for:', message.id)}
                           {postMenuOpen && (
                             <div className="post-actions-menu__list" role="menu">
                               <button
