@@ -3485,8 +3485,7 @@ export default function HomePage() {
               {showDmMenu && (
                 <div
                   className="post-actions-menu post-actions-menu--dm"
-                  onClickCapture={(e) => e.stopPropagation()}
-                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
                 >
                   <button
                     type="button"
@@ -3495,11 +3494,9 @@ export default function HomePage() {
                     aria-expanded={dmMenuOpen}
                     aria-label="Direct message actions"
                     onClick={(e) => {
-                      e.preventDefault();
                       e.stopPropagation();
                       toggleDmActionsMenu(msg.id);
                     }}
-                    onPointerDown={(e) => e.stopPropagation()}
                   >
                     ⋮
                   </button>
@@ -3511,12 +3508,9 @@ export default function HomePage() {
                           className="post-actions-menu__item"
                           role="menuitem"
                           onClick={(e) => {
-                            e.preventDefault();
                             e.stopPropagation();
                             startEditDirectMessage(msg);
-                            closeDmActionsMenu();
                           }}
-                          onPointerDown={(e) => e.stopPropagation()}
                         >
                           Edit
                         </button>
@@ -3527,11 +3521,9 @@ export default function HomePage() {
                           className="post-actions-menu__item post-actions-menu__item--danger"
                           role="menuitem"
                           onClick={(e) => {
-                            e.preventDefault();
                             e.stopPropagation();
                             deleteDirectMessage(msg);
                           }}
-                          onPointerDown={(e) => e.stopPropagation()}
                           disabled={dmDeletingId === msg.id}
                         >
                           {dmDeletingId === msg.id ? 'Deleting…' : 'Delete'}
@@ -4324,8 +4316,7 @@ export default function HomePage() {
                       {showPostActionsMenu && (
                         <div
                           className="post-actions-menu"
-                          onClickCapture={(e) => e.stopPropagation()}
-                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
                         >
                           <button
                             type="button"
@@ -4334,12 +4325,10 @@ export default function HomePage() {
                             aria-expanded={postMenuOpen}
                             aria-label="Post actions"
                             onClick={(e) => {
-                              e.preventDefault();
                               e.stopPropagation();
                               console.log('[menu-debug] Trigger clicked, postMenuOpen before:', postMenuOpen, 'messageId:', message.id);
                               togglePostActionsMenu(message.id);
                             }}
-                            onPointerDown={(e) => e.stopPropagation()}
                           >
                             ⋮
                           </button>
@@ -4350,12 +4339,9 @@ export default function HomePage() {
                                 className="post-actions-menu__item"
                                 role="menuitem"
                                 onClick={(e) => {
-                                  e.preventDefault();
                                   e.stopPropagation();
                                   startEditPost(message);
-                                  closePostActionsMenu();
                                 }}
-                                onPointerDown={(e) => e.stopPropagation()}
                               >
                                 Edit
                               </button>
@@ -4365,11 +4351,9 @@ export default function HomePage() {
                                   className="post-actions-menu__item post-actions-menu__item--danger"
                                   role="menuitem"
                                   onClick={(e) => {
-                                    e.preventDefault();
                                     e.stopPropagation();
                                     deletePost(message);
                                   }}
-                                  onPointerDown={(e) => e.stopPropagation()}
                                   disabled={postDeletingId === message.id}
                                 >
                                   {postDeletingId === message.id ? 'Deleting…' : 'Delete'}
@@ -4980,8 +4964,7 @@ export default function HomePage() {
                     {showCommentMenu && (
                       <div
                         className="post-actions-menu post-actions-menu--comment"
-                        onClickCapture={(e) => e.stopPropagation()}
-                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => e.stopPropagation()}
                       >
                         <button
                           type="button"
@@ -4990,11 +4973,9 @@ export default function HomePage() {
                           aria-expanded={commentMenuOpen}
                           aria-label="Comment actions"
                           onClick={(e) => {
-                            e.preventDefault();
                             e.stopPropagation();
                             toggleCommentActionsMenu(comment.id);
                           }}
-                          onPointerDown={(e) => e.stopPropagation()}
                         >
                           ⋮
                         </button>
@@ -5006,12 +4987,9 @@ export default function HomePage() {
                                 className="post-actions-menu__item"
                                 role="menuitem"
                                 onClick={(e) => {
-                                  e.preventDefault();
                                   e.stopPropagation();
                                   startEditComment(comment);
-                                  closeCommentActionsMenu();
                                 }}
-                                onPointerDown={(e) => e.stopPropagation()}
                               >
                                 Edit
                               </button>
@@ -5022,11 +5000,9 @@ export default function HomePage() {
                                 className="post-actions-menu__item post-actions-menu__item--danger"
                                 role="menuitem"
                                 onClick={(e) => {
-                                  e.preventDefault();
                                   e.stopPropagation();
                                   deleteComment(comment);
                                 }}
-                                onPointerDown={(e) => e.stopPropagation()}
                                 disabled={commentDeletingId === comment.id}
                               >
                                 {commentDeletingId === comment.id ? 'Deleting…' : 'Delete'}
