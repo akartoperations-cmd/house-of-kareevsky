@@ -686,13 +686,20 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
 
   // Always render audio element with controls - never hide it
   return (
-    <div style={{ width: '100%' }}>
+    <div
+      style={{ width: '100%' }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+      }}
+    >
       <audio
         key={playbackSrc || 'audio-fallback'}
         controls
         preload="none"
         playsInline
-        controlsList={isReader ? 'nodownload' : undefined}
+        // @ts-expect-error disable PiP is supported by some browsers but not in typings
+        disablePictureInPicture
+        controlsList="nodownload noplaybackrate noremoteplayback"
         style={{ width: '100%', display: 'block', minHeight: '40px' }}
         src={playbackSrc || undefined}
         onLoadedMetadata={() => setStatus('ready')}
@@ -701,6 +708,7 @@ function AudioPostPlayer({ audioUrl, storagePath, isReader }: AudioPostPlayerPro
           setStatus('error');
           setErrorMessage('Audio failed to play');
         }}
+        onContextMenu={(e) => e.preventDefault()}
       >
         {playbackSrc && <source src={playbackSrc} type={mimeType} />}
         Your browser does not support audio.
@@ -913,6 +921,7 @@ export default function HomePage() {
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [commentSavingId, setCommentSavingId] = useState<string | null>(null);
   const [commentDeletingId, setCommentDeletingId] = useState<string | null>(null);
+  const [commentActionsOpenId, setCommentActionsOpenId] = useState<string | null>(null);
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [postDrafts, setPostDrafts] = useState<Record<string, string>>({});
   const [postSavingId, setPostSavingId] = useState<string | null>(null);
@@ -922,6 +931,7 @@ export default function HomePage() {
   const [dmDrafts, setDmDrafts] = useState<Record<string, string>>({});
   const [dmSavingId, setDmSavingId] = useState<string | null>(null);
   const [dmDeletingId, setDmDeletingId] = useState<string | null>(null);
+  const [dmActionsOpenId, setDmActionsOpenId] = useState<string | null>(null);
   const [createTab, setCreateTab] = useState<'text' | 'media' | 'audio' | 'poll' | 'languages'>('text');
   const [createTextTitle, setCreateTextTitle] = useState('');
   const [createTextBody, setCreateTextBody] = useState('');
@@ -978,6 +988,46 @@ export default function HomePage() {
   const [pushEnabled, setPushEnabled] = useState(false);
   const [showPushBanner, setShowPushBanner] = useState(false);
   const [showInstallInstructions, setShowInstallInstructions] = useState(false);
+  const getOneSignalSubscriptionState = useCallback(
+    async (OneSignalInstance?: any) => {
+      const OneSignal = OneSignalInstance;
+      if (!OneSignal) return false;
+
+      try {
+        const userSub = OneSignal?.User?.PushSubscription;
+        if (userSub) {
+          const { getOptedIn, optedIn } = userSub;
+          if (typeof getOptedIn === 'function') {
+            const result = await getOptedIn();
+            if (typeof result === 'boolean') return result;
+          }
+          if (typeof optedIn === 'boolean') return optedIn;
+          if (typeof optedIn === 'function') {
+            const result = await optedIn();
+            if (typeof result === 'boolean') return result;
+          }
+          if (optedIn && typeof optedIn.then === 'function') {
+            const result = await optedIn;
+            if (typeof result === 'boolean') return result;
+          }
+        }
+
+        if (OneSignal?.Notifications?.isSubscribed) {
+          return Boolean(await OneSignal.Notifications.isSubscribed());
+        }
+        if (OneSignal?.Notifications?.isPushEnabled) {
+          return Boolean(await OneSignal.Notifications.isPushEnabled());
+        }
+      } catch (err) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[push] Subscription read failed', err);
+        }
+      }
+
+      return false;
+    },
+    [],
+  );
   const syncPushStatus = useCallback(
     async (OneSignalInstance?: any) => {
       const perm = typeof Notification === 'undefined' ? 'unsupported' : (Notification.permission as NotificationPermission);
@@ -996,11 +1046,7 @@ export default function HomePage() {
           setPushEnabled(false);
           return;
         }
-        const subscribed = OneSignal?.Notifications?.isSubscribed
-          ? await OneSignal.Notifications.isSubscribed()
-          : OneSignal?.Notifications?.isPushEnabled
-            ? await OneSignal.Notifications.isPushEnabled()
-            : false;
+        const subscribed = await getOneSignalSubscriptionState(OneSignal);
         setPushEnabled(Boolean(subscribed));
       } catch (err) {
         if (process.env.NODE_ENV !== 'production') {
@@ -1008,7 +1054,7 @@ export default function HomePage() {
         }
       }
     },
-    [],
+    [getOneSignalSubscriptionState],
   );
   const refreshPushStatus = useCallback(() => {
     if (typeof window === 'undefined') {
@@ -1028,59 +1074,53 @@ export default function HomePage() {
     if (typeof window === 'undefined') return;
     window.OneSignalDeferred = window.OneSignalDeferred || [];
     window.OneSignalDeferred.push(async (OneSignal) => {
+      const permission =
+        typeof Notification === 'undefined' ? 'unsupported' : (Notification.permission as NotificationPermission);
+      const isSubscribedBefore = await getOneSignalSubscriptionState(OneSignal);
+      console.log('[push-debug] permission', permission, 'isSubscribed before', isSubscribedBefore);
+
+      setPushPermission(permission === 'default' || permission === 'granted' || permission === 'denied' ? permission : 'unsupported');
+
+      if (permission === 'denied' || permission === 'unsupported') {
+        setPushEnabled(false);
+        return;
+      }
+
+      if (permission === 'default') {
+        await syncPushStatus(OneSignal);
+        return;
+      }
+
       try {
-        const currentPerm =
-          typeof Notification === 'undefined' ? 'unsupported' : (Notification.permission as NotificationPermission);
-
-        if (currentPerm === 'denied' || currentPerm === 'unsupported') {
-          setPushPermission(currentPerm);
-          setPushEnabled(false);
-          return;
-        }
-
-        if (pushEnabled) {
-          if (OneSignal?.Notifications?.unsubscribe) {
+        if (isSubscribedBefore) {
+          if (OneSignal?.User?.PushSubscription?.optOut) {
+            await OneSignal.User.PushSubscription.optOut();
+          } else if (OneSignal?.Notifications?.unsubscribe) {
             await OneSignal.Notifications.unsubscribe();
           } else if (OneSignal?.Notifications?.setSubscription) {
             await OneSignal.Notifications.setSubscription(false);
           }
-          await syncPushStatus(OneSignal);
-          setShowPushBanner(true);
-          return;
-        }
-
-        if (currentPerm === 'default') {
-          if (OneSignal?.Notifications?.requestPermission) {
-            await OneSignal.Notifications.requestPermission();
-          } else if (OneSignal?.showNativePrompt) {
-            await OneSignal.showNativePrompt();
+        } else {
+          if (OneSignal?.User?.PushSubscription?.optIn) {
+            await OneSignal.User.PushSubscription.optIn();
+          } else if (OneSignal?.Notifications?.subscribe) {
+            await OneSignal.Notifications.subscribe();
+          } else if (OneSignal?.Notifications?.setSubscription) {
+            await OneSignal.Notifications.setSubscription(true);
           }
         }
-
-        const finalPerm =
-          typeof Notification === 'undefined' ? 'unsupported' : (Notification.permission as NotificationPermission);
-        setPushPermission(finalPerm);
-
-        if (finalPerm !== 'granted') {
-          setPushEnabled(false);
-          setShowPushBanner(true);
-          return;
-        }
-
-        if (OneSignal?.Notifications?.subscribe) {
-          await OneSignal.Notifications.subscribe();
-        } else if (OneSignal?.Notifications?.setSubscription) {
-          await OneSignal.Notifications.setSubscription(true);
-        }
-
-        await syncPushStatus(OneSignal);
       } catch (err) {
         if (process.env.NODE_ENV !== 'production') {
           console.warn('[push] Toggle failed', err);
         }
       }
+
+      const isSubscribedAfter = await getOneSignalSubscriptionState(OneSignal);
+      console.log('[push-debug] isSubscribed after', isSubscribedAfter);
+
+      await syncPushStatus(OneSignal);
     });
-  }, [pushEnabled, syncPushStatus]);
+  }, [getOneSignalSubscriptionState, syncPushStatus]);
   const pushState = useMemo<'on' | 'off' | 'denied'>(() => {
     if (pushPermission === 'denied' || pushPermission === 'unsupported') return 'denied';
     return pushEnabled ? 'on' : 'off';
@@ -1296,10 +1336,28 @@ export default function HomePage() {
 
   const togglePostActionsMenu = useCallback(
     (messageId: string) => {
+      setCommentActionsOpenId(null);
+      setDmActionsOpenId(null);
       setPostActionsOpenId((prev) => (prev === messageId ? null : messageId));
     },
     [],
   );
+
+  const closeCommentActionsMenu = useCallback(() => setCommentActionsOpenId(null), []);
+
+  const toggleCommentActionsMenu = useCallback((commentId: string) => {
+    setPostActionsOpenId(null);
+    setDmActionsOpenId(null);
+    setCommentActionsOpenId((prev) => (prev === commentId ? null : commentId));
+  }, []);
+
+  const closeDmActionsMenu = useCallback(() => setDmActionsOpenId(null), []);
+
+  const toggleDmActionsMenu = useCallback((dmId: string) => {
+    setPostActionsOpenId(null);
+    setCommentActionsOpenId(null);
+    setDmActionsOpenId((prev) => (prev === dmId ? null : dmId));
+  }, []);
 
   useEffect(
     () => () => {
@@ -2126,6 +2184,9 @@ export default function HomePage() {
       target.closest('.emoji-panel') ||
       target.closest('.photo-header') ||
       target.closest('.menu-btn') ||
+      target.closest('.post-actions-menu') ||
+      target.closest('.post-actions-menu__trigger') ||
+      target.closest('.post-actions-menu__list') ||
       target.closest('.refresh-btn') ||
       target.closest('.notification-banner') ||
       target.closest('.bottom-sheet') ||
@@ -2146,80 +2207,6 @@ export default function HomePage() {
     setCommentsModalOpen(false);
     setActiveMessageId(null);
   };
-
-  const buildPostShareUrl = useCallback((postId: string) => {
-    if (typeof window === 'undefined' || !postId) return '';
-    const origin = window.location.origin || '';
-    return `${origin}/?open=post&postId=${encodeURIComponent(postId)}`;
-  }, []);
-
-  const copyToClipboard = useCallback(async (value: string) => {
-    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(value);
-        return true;
-      } catch (err) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.warn('[share] Clipboard API failed', err);
-        }
-      }
-    }
-
-    if (typeof document === 'undefined') return false;
-
-    try {
-      const textarea = document.createElement('textarea');
-      textarea.value = value;
-      textarea.setAttribute('readonly', '');
-      textarea.style.position = 'absolute';
-      textarea.style.left = '-9999px';
-      document.body.appendChild(textarea);
-      textarea.select();
-      const success = document.execCommand('copy');
-      document.body.removeChild(textarea);
-      return success;
-    } catch (err) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn('[share] execCommand copy failed', err);
-      }
-      return false;
-    }
-  }, []);
-
-  const sharePost = useCallback(
-    async (message: Message) => {
-      const url = buildPostShareUrl(message.id);
-      if (!url) {
-        showToast('Link unavailable');
-        return;
-      }
-
-      const shareData = {
-        title: `${BRANDING.name} post`,
-        text: message.text || undefined,
-        url,
-      };
-      const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
-
-      if (canShare) {
-        try {
-          await navigator.share(shareData);
-          return;
-        } catch (err) {
-          if ((err as { name?: string }).name === 'AbortError') {
-            return;
-          }
-          if (process.env.NODE_ENV !== 'production') {
-            console.warn('[share] navigator.share failed', err);
-          }
-        }
-      }
-
-      const copied = await copyToClipboard(url);
-      showToast(copied ? 'Link copied' : 'Unable to copy link');
-    },
-    [buildPostShareUrl, copyToClipboard, showToast],
-  );
 
   const toggleBookmark = (messageId: string) => {
     setBookmarks((prev) => {
@@ -2553,6 +2540,7 @@ export default function HomePage() {
 
   const startEditDirectMessage = (msg: PersonalMessage) => {
     if (!canEditDirectMessage(msg)) return;
+    closeDmActionsMenu();
     setEditingDmId(msg.id);
     setDmDrafts((prev) => ({ ...prev, [msg.id]: prev[msg.id] ?? msg.text }));
   };
@@ -2599,6 +2587,7 @@ export default function HomePage() {
 
   const deleteDirectMessage = async (msg: PersonalMessage) => {
     if (!canDeleteDirectMessage(msg)) return;
+    closeDmActionsMenu();
     if (!window.confirm('Delete this message?')) return;
 
     const supabase = getSupabaseBrowserClient();
@@ -2998,8 +2987,16 @@ export default function HomePage() {
           throw err;
         }
       } else if (createTab === 'poll') {
+        const pollQuestionText = pollQuestion.trim();
         const trimmedOptions = pollOptions.map((o) => o.trim()).filter(Boolean);
-        if (!pollQuestion.trim() || trimmedOptions.length < 2) return;
+        if (!pollQuestionText) {
+          showToast('Add a poll question.');
+          return;
+        }
+        if (trimmedOptions.length < 2) {
+          showToast('Add at least two options.');
+          return;
+        }
         let newPostId: string | null = null;
         let newPollId: string | null = null;
         try {
@@ -3008,10 +3005,10 @@ export default function HomePage() {
             .insert({
               author_id: authorId,
               type: 'poll',
-              body_text: pollQuestion.trim(),
+              body_text: pollQuestionText,
               visibility: 'public',
               metadata: {
-                poll_question: pollQuestion.trim(),
+                poll_question: pollQuestionText,
                 poll_options: trimmedOptions.slice(0, 4),
                 time_label: timeLabel,
               },
@@ -3021,13 +3018,11 @@ export default function HomePage() {
           if (postError) throw postError;
 
           newPostId = (postData as PostRow).id;
-
           const { data: pollData, error: pollError } = await supabase
             .from('polls')
             .insert({
               post_id: newPostId,
-              question: pollQuestion.trim(),
-              created_by: authorId,
+              question: pollQuestionText,
             })
             .select()
             .single();
@@ -3051,7 +3046,7 @@ export default function HomePage() {
             .update({
               metadata: {
                 poll_id: newPollId,
-                poll_question: pollQuestion.trim(),
+                poll_question: pollQuestionText,
                 poll_options: trimmedOptions.slice(0, 4),
                 time_label: timeLabel,
               },
@@ -3070,7 +3065,7 @@ export default function HomePage() {
           const pollDataByPostId: PollDataByPostId = {
             [newPostId]: {
               pollId: newPollId as string,
-              question: pollQuestion.trim(),
+              question: pollQuestionText,
               options: optionStats,
               totalVotes: 0,
               userVoteOptionId: null,
@@ -3088,7 +3083,7 @@ export default function HomePage() {
           triggerPushEvent({
             eventType: 'admin_new_post',
             postId: newPostId,
-            messageText: pollQuestion.trim(),
+            messageText: pollQuestionText,
             deepLink: '/?open=latest',
           });
           showToast('Poll published.');
@@ -3293,6 +3288,7 @@ export default function HomePage() {
 
   const startEditComment = (comment: Comment) => {
     if (!canEditComment(comment)) return;
+    closeCommentActionsMenu();
     setEditingCommentId(comment.id);
     setCommentDrafts((prev) => ({ ...prev, [comment.id]: prev[comment.id] ?? comment.text }));
   };
@@ -3348,6 +3344,7 @@ export default function HomePage() {
 
   const deleteComment = async (comment: Comment) => {
     if (!canDeleteComment(comment)) return;
+    closeCommentActionsMenu();
     if (!window.confirm('Delete this comment?')) return;
     const postId = comment.postId || activeMessageId;
     const supabase = getSupabaseBrowserClient();
@@ -3451,7 +3448,10 @@ export default function HomePage() {
         {personalMessages.map((msg) => {
           const isArtist = msg.author === 'artist';
           const canEditMsg = canEditDirectMessage(msg);
+          const canDeleteMsg = canDeleteDirectMessage(msg);
           const isEditing = editingDmId === msg.id;
+          const showDmMenu = (canEditMsg || canDeleteMsg) && !isEditing;
+          const dmMenuOpen = dmActionsOpenId === msg.id;
           const draftValue = dmDrafts[msg.id] ?? msg.text;
           return (
             <div
@@ -3462,6 +3462,65 @@ export default function HomePage() {
                 marginRight: isArtist ? undefined : 'var(--space-md)',
               }}
             >
+              {showDmMenu && (
+                <div
+                  className="post-actions-menu post-actions-menu--dm"
+                  onClickCapture={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="post-actions-menu__trigger"
+                    aria-haspopup="menu"
+                    aria-expanded={dmMenuOpen}
+                    aria-label="Direct message actions"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      toggleDmActionsMenu(msg.id);
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    ⋯
+                  </button>
+                  {dmMenuOpen && (
+                    <div className="post-actions-menu__list" role="menu">
+                      {canEditMsg && (
+                        <button
+                          type="button"
+                          className="post-actions-menu__item"
+                          role="menuitem"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            startEditDirectMessage(msg);
+                            closeDmActionsMenu();
+                          }}
+                          onPointerDown={(e) => e.stopPropagation()}
+                        >
+                          Edit
+                        </button>
+                      )}
+                      {canDeleteMsg && (
+                        <button
+                          type="button"
+                          className="post-actions-menu__item post-actions-menu__item--danger"
+                          role="menuitem"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            deleteDirectMessage(msg);
+                          }}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          disabled={dmDeletingId === msg.id}
+                        >
+                          {dmDeletingId === msg.id ? 'Deleting…' : 'Delete'}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="message__bubble message__bubble--text">
                 {isEditing ? (
                   <>
@@ -3502,28 +3561,6 @@ export default function HomePage() {
                   {msg.updatedAt && <span style={{ marginLeft: '6px' }}>(edited)</span>}
                 </div>
               </div>
-              {canEditMsg && !isEditing && (
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: '8px',
-                    marginTop: '6px',
-                    justifyContent: isArtist ? 'flex-start' : 'flex-end',
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <button className="inline-btn" onClick={() => startEditDirectMessage(msg)}>
-                    Edit
-                  </button>
-                  <button
-                    className="inline-btn"
-                    onClick={() => deleteDirectMessage(msg)}
-                    disabled={dmDeletingId === msg.id}
-                  >
-                    {dmDeletingId === msg.id ? 'Deleting…' : 'Delete'}
-                  </button>
-                </div>
-              )}
             </div>
           );
         })}
@@ -4117,7 +4154,6 @@ export default function HomePage() {
                   onReact={() => toggleEmojiPanel(message.id)}
                   onSelectEmoji={(emoji) => selectReaction(message.id, emoji)}
                   onOpenGallery={(images) => openPostGallery(images)}
-                  onShare={() => sharePost(message)}
                   onShowToast={showToast}
                   onVoteOption={
                     message.type === 'poll' && message.pollId && (message.pollOptionStats?.length || message.pollOptions?.length)
@@ -4261,134 +4297,136 @@ export default function HomePage() {
                 const postMenuOpen = postActionsOpenId === message.id;
                 return (
                   <div key={message.id} className="feed-item">
-                    {showPostActionsMenu && (
-                      <div
-                        className="post-actions-menu"
-                        onClickCapture={(e) => e.stopPropagation()}
-                        onPointerDown={(e) => e.stopPropagation()}
-                      >
-                        <button
-                          type="button"
-                          className="post-actions-menu__trigger"
-                          aria-haspopup="menu"
-                          aria-expanded={postMenuOpen}
-                          aria-label="Post actions"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            togglePostActionsMenu(message.id);
-                          }}
+                    <div className="post-card">
+                      {showPostActionsMenu && (
+                        <div
+                          className="post-actions-menu"
+                          onClickCapture={(e) => e.stopPropagation()}
                           onPointerDown={(e) => e.stopPropagation()}
                         >
-                          ⋯
-                        </button>
-                        {postMenuOpen && (
-                          <div className="post-actions-menu__list" role="menu">
-                            <button
-                              type="button"
-                              className="post-actions-menu__item"
-                              role="menuitem"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                startEditPost(message);
-                              }}
-                              onPointerDown={(e) => e.stopPropagation()}
-                            >
-                              Edit
-                            </button>
-                            {canDeleteThisPost && (
+                          <button
+                            type="button"
+                            className="post-actions-menu__trigger"
+                            aria-haspopup="menu"
+                            aria-expanded={postMenuOpen}
+                            aria-label="Post actions"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              togglePostActionsMenu(message.id);
+                            }}
+                            onPointerDown={(e) => e.stopPropagation()}
+                          >
+                            ⋯
+                          </button>
+                          {postMenuOpen && (
+                            <div className="post-actions-menu__list" role="menu">
                               <button
                                 type="button"
-                                className="post-actions-menu__item post-actions-menu__item--danger"
+                                className="post-actions-menu__item"
                                 role="menuitem"
                                 onClick={(e) => {
                                   e.preventDefault();
                                   e.stopPropagation();
-                                  deletePost(message);
+                                  startEditPost(message);
+                                  closePostActionsMenu();
                                 }}
                                 onPointerDown={(e) => e.stopPropagation()}
-                                disabled={postDeletingId === message.id}
                               >
-                                {postDeletingId === message.id ? 'Deleting…' : 'Delete'}
+                                Edit
                               </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {isEditingThisPost && canEditThisPost && (
-                      <div
-                        onClickCapture={(e) => e.stopPropagation()}
-                        onPointerDown={(e) => e.stopPropagation()}
-                        style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '8px',
-                          marginBottom: '8px',
-                          background: 'rgba(255,255,255,0.03)',
-                          border: '1px solid rgba(255,255,255,0.08)',
-                          borderRadius: '10px',
-                          padding: '10px',
-                        }}
-                      >
-                        <textarea
-                          value={postDraftValue}
-                          onChange={(e) =>
-                            setPostDrafts((prev) => ({ ...prev, [message.id]: e.target.value }))
-                          }
-                          className="write-view__textarea"
-                          style={{ minHeight: '120px', padding: '10px' }}
-                        />
-                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                          <button
-                            type="button"
-                            className="inline-btn"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              savePostEdit(message);
-                            }}
-                            disabled={postSavingId === message.id}
-                            style={{ padding: '6px 10px' }}
-                          >
-                            {postSavingId === message.id ? 'Saving…' : 'Save'}
-                          </button>
-                          <button
-                            type="button"
-                            className="inline-btn inline-btn--ghost"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              cancelEditPost();
-                            }}
-                            style={{ padding: '6px 10px' }}
-                          >
-                            Cancel
-                          </button>
+                              {canDeleteThisPost && (
+                                <button
+                                  type="button"
+                                  className="post-actions-menu__item post-actions-menu__item--danger"
+                                  role="menuitem"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    deletePost(message);
+                                  }}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  disabled={postDeletingId === message.id}
+                                >
+                                  {postDeletingId === message.id ? 'Deleting…' : 'Delete'}
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    )}
-                    <MessageBubble
-                      message={message}
-                      isAdmin={isAdmin}
-                      isBookmarked={bookmarks[message.id] || false}
-                      reaction={reactions[message.id]}
-                      emojiPanelOpen={emojiPanelOpen === message.id}
-                      onSay={() => openComments(message.id)}
-                      onBookmark={() => toggleBookmark(message.id)}
-                      onReact={() => toggleEmojiPanel(message.id)}
-                      onSelectEmoji={(emoji) => selectReaction(message.id, emoji)}
-                      onOpenGallery={(images) => openPostGallery(images)}
-                      onShare={() => sharePost(message)}
-                      onShowToast={showToast}
-                      onVoteOption={
-                    message.type === 'poll' && message.pollId && (message.pollOptionStats?.length || message.pollOptions?.length)
-                          ? (optionId) => voteOnPollOption(message.pollId as string, optionId)
-                          : undefined
-                      }
-                      pollIsVoting={message.pollId ? Boolean(pollVoteLoadingById[message.pollId]) : false}
-                    />
+                      )}
+                      {isEditingThisPost && canEditThisPost && (
+                        <div
+                          onClickCapture={(e) => e.stopPropagation()}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '8px',
+                            marginBottom: '8px',
+                            background: 'rgba(255,255,255,0.03)',
+                            border: '1px solid rgba(255,255,255,0.08)',
+                            borderRadius: '10px',
+                            padding: '10px',
+                          }}
+                        >
+                          <textarea
+                            value={postDraftValue}
+                            onChange={(e) =>
+                              setPostDrafts((prev) => ({ ...prev, [message.id]: e.target.value }))
+                            }
+                            className="write-view__textarea"
+                            style={{ minHeight: '120px', padding: '10px' }}
+                          />
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                            <button
+                              type="button"
+                              className="inline-btn"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                savePostEdit(message);
+                              }}
+                              disabled={postSavingId === message.id}
+                              style={{ padding: '6px 10px' }}
+                            >
+                              {postSavingId === message.id ? 'Saving…' : 'Save'}
+                            </button>
+                            <button
+                              type="button"
+                              className="inline-btn inline-btn--ghost"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                cancelEditPost();
+                              }}
+                              style={{ padding: '6px 10px' }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      <MessageBubble
+                        message={message}
+                        isAdmin={isAdmin}
+                        isBookmarked={bookmarks[message.id] || false}
+                        reaction={reactions[message.id]}
+                        emojiPanelOpen={emojiPanelOpen === message.id}
+                        onSay={() => openComments(message.id)}
+                        onBookmark={() => toggleBookmark(message.id)}
+                        onReact={() => toggleEmojiPanel(message.id)}
+                        onSelectEmoji={(emoji) => selectReaction(message.id, emoji)}
+                        onOpenGallery={(images) => openPostGallery(images)}
+                        onShowToast={showToast}
+                        onVoteOption={
+                          message.type === 'poll' && message.pollId && (message.pollOptionStats?.length || message.pollOptions?.length)
+                            ? (optionId) => voteOnPollOption(message.pollId as string, optionId)
+                            : undefined
+                        }
+                        pollIsVoting={message.pollId ? Boolean(pollVoteLoadingById[message.pollId]) : false}
+                      />
+                    </div>
                   </div>
                 );
               })}
@@ -4908,67 +4946,114 @@ export default function HomePage() {
               <button onClick={closeComments}>{Icons.close}</button>
             </div>
             <div className="comments-modal__list">
-              {commentsForActiveMessage.map((comment) => (
-                <div key={comment.id} className="comment" style={{ position: 'relative' }}>
-                  <div
-                    className="comment__author"
-                    style={{
-                      color: comment.author === 'Kareevsky' ? 'var(--accent)' : undefined,
-                    }}
-                  >
-                    {comment.author}
-                    {comment.updatedAt && (
-                      <span style={{ marginLeft: '8px', color: 'var(--text-secondary)', fontSize: '11px' }}>
-                        (edited)
-                      </span>
-                    )}
-                  </div>
-                  {editingCommentId === comment.id ? (
-                    <>
-                      <textarea
-                        value={commentDrafts[comment.id] ?? comment.text}
-                        onChange={(e) =>
-                          setCommentDrafts((prev) => ({ ...prev, [comment.id]: e.target.value }))
-                        }
-                        className="write-view__textarea"
-                        style={{ minHeight: '80px', padding: '12px', marginTop: '6px' }}
-                      />
-                      <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+              {commentsForActiveMessage.map((comment) => {
+                const commentCanEdit = canEditComment(comment);
+                const commentCanDelete = canDeleteComment(comment);
+                const showCommentMenu = (commentCanEdit || commentCanDelete) && editingCommentId !== comment.id;
+                const commentMenuOpen = commentActionsOpenId === comment.id;
+                return (
+                  <div key={comment.id} className="comment" style={{ position: 'relative' }}>
+                    {showCommentMenu && (
+                      <div
+                        className="post-actions-menu post-actions-menu--comment"
+                        onClickCapture={(e) => e.stopPropagation()}
+                        onPointerDown={(e) => e.stopPropagation()}
+                      >
                         <button
-                          className="inline-btn"
-                          onClick={() => saveCommentEdit(comment)}
-                          disabled={commentSavingId === comment.id}
+                          type="button"
+                          className="post-actions-menu__trigger"
+                          aria-haspopup="menu"
+                          aria-expanded={commentMenuOpen}
+                          aria-label="Comment actions"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleCommentActionsMenu(comment.id);
+                          }}
+                          onPointerDown={(e) => e.stopPropagation()}
                         >
-                          {commentSavingId === comment.id ? 'Saving…' : 'Save'}
+                          ⋯
                         </button>
-                        <button className="inline-btn inline-btn--ghost" onClick={cancelEditComment}>
-                          Cancel
-                        </button>
+                        {commentMenuOpen && (
+                          <div className="post-actions-menu__list" role="menu">
+                            {commentCanEdit && (
+                              <button
+                                type="button"
+                                className="post-actions-menu__item"
+                                role="menuitem"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  startEditComment(comment);
+                                  closeCommentActionsMenu();
+                                }}
+                                onPointerDown={(e) => e.stopPropagation()}
+                              >
+                                Edit
+                              </button>
+                            )}
+                            {commentCanDelete && (
+                              <button
+                                type="button"
+                                className="post-actions-menu__item post-actions-menu__item--danger"
+                                role="menuitem"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  deleteComment(comment);
+                                }}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                disabled={commentDeletingId === comment.id}
+                              >
+                                {commentDeletingId === comment.id ? 'Deleting…' : 'Delete'}
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    </>
-                  ) : (
-                    <div className="comment__text">{comment.text}</div>
-                  )}
-                  {(canEditComment(comment) || canDeleteComment(comment)) && editingCommentId !== comment.id && (
-                    <div style={{ display: 'flex', gap: '8px', marginTop: '6px', flexWrap: 'wrap' }}>
-                      {canEditComment(comment) && (
-                        <button className="inline-btn" onClick={() => startEditComment(comment)}>
-                          Edit
-                        </button>
-                      )}
-                      {canDeleteComment(comment) && (
-                        <button
-                          className="inline-btn"
-                          onClick={() => deleteComment(comment)}
-                          disabled={commentDeletingId === comment.id}
-                        >
-                          {commentDeletingId === comment.id ? 'Deleting…' : 'Delete'}
-                        </button>
+                    )}
+                    <div
+                      className="comment__author"
+                      style={{
+                        color: comment.author === 'Kareevsky' ? 'var(--accent)' : undefined,
+                      }}
+                    >
+                      {comment.author}
+                      {comment.updatedAt && (
+                        <span style={{ marginLeft: '8px', color: 'var(--text-secondary)', fontSize: '11px' }}>
+                          (edited)
+                        </span>
                       )}
                     </div>
-                  )}
-                </div>
-              ))}
+                    {editingCommentId === comment.id ? (
+                      <>
+                        <textarea
+                          value={commentDrafts[comment.id] ?? comment.text}
+                          onChange={(e) =>
+                            setCommentDrafts((prev) => ({ ...prev, [comment.id]: e.target.value }))
+                          }
+                          className="write-view__textarea"
+                          style={{ minHeight: '80px', padding: '12px', marginTop: '6px' }}
+                        />
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                          <button
+                            className="inline-btn"
+                            onClick={() => saveCommentEdit(comment)}
+                            disabled={commentSavingId === comment.id}
+                          >
+                            {commentSavingId === comment.id ? 'Saving…' : 'Save'}
+                          </button>
+                          <button className="inline-btn inline-btn--ghost" onClick={cancelEditComment}>
+                            Cancel
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="comment__text">{comment.text}</div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             <div style={{ padding: '12px' }}>
               {isAdmin && (
@@ -5070,7 +5155,6 @@ interface MessageBubbleProps {
   onReact: () => void;
   onSelectEmoji: (emoji: string) => void;
   onOpenGallery: (images: string[]) => void;
-  onShare: () => void;
   onShowToast: (text: string, timeoutMs?: number) => void;
   onVoteOption?: (optionId: string) => void;
   pollIsVoting?: boolean;
@@ -5087,7 +5171,6 @@ function MessageBubble({
   onReact,
   onSelectEmoji,
   onOpenGallery,
-  onShare,
   onShowToast,
   onVoteOption,
   pollIsVoting,
@@ -5175,10 +5258,6 @@ function MessageBubble({
             <button className="actions__btn" onClick={onReact}>
               {Icons.sparkle}
               <span>React</span>
-            </button>
-            <button className="actions__btn" onClick={onShare}>
-              {Icons.share}
-              <span>Share</span>
             </button>
           </div>
 
@@ -5295,10 +5374,6 @@ function MessageBubble({
             {Icons.sparkle}
             <span>React</span>
           </button>
-          <button className="actions__btn" onClick={onShare}>
-            {Icons.share}
-            <span>Share</span>
-          </button>
         </div>
 
         {emojiPanelOpen && (
@@ -5393,10 +5468,6 @@ function MessageBubble({
           {Icons.sparkle}
           <span>React</span>
         </button>
-        <button className="actions__btn" onClick={onShare}>
-          {Icons.share}
-          <span>Share</span>
-        </button>
       </div>
       </div>
     );
@@ -5480,10 +5551,6 @@ function MessageBubble({
             {Icons.sparkle}
             <span>React</span>
           </button>
-          <button className="actions__btn" onClick={onShare}>
-            {Icons.share}
-            <span>Share</span>
-          </button>
         </div>
 
         {emojiPanelOpen && (
@@ -5544,10 +5611,6 @@ function MessageBubble({
             {Icons.sparkle}
             <span>React</span>
           </button>
-          <button className="actions__btn" onClick={onShare}>
-            {Icons.share}
-            <span>Share</span>
-          </button>
         </div>
 
         {emojiPanelOpen && (
@@ -5602,10 +5665,6 @@ function MessageBubble({
             {Icons.sparkle}
             <span>React</span>
           </button>
-          <button className="actions__btn" onClick={onShare}>
-            {Icons.share}
-            <span>Share</span>
-          </button>
         </div>
 
         {emojiPanelOpen && (
@@ -5651,10 +5710,6 @@ function MessageBubble({
         <button className="actions__btn" onClick={onReact}>
           {Icons.sparkle}
           <span>React</span>
-        </button>
-        <button className="actions__btn" onClick={onShare}>
-          {Icons.share}
-          <span>Share</span>
         </button>
       </div>
 
