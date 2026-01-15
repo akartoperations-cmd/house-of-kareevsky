@@ -446,8 +446,9 @@ button:focus {
 
 .post-card {
   position: relative;
-  width: fit-content;
-  max-width: 100%;
+  display: inline-block;
+  width: auto;
+  max-width: min(86vw, 520px);
 }
 
 .post-actions-menu {

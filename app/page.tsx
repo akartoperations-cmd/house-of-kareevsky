@@ -1294,15 +1294,21 @@ export default function HomePage() {
   }, []);
 
   const canEditPost = useCallback(
-    (message: Message) => Boolean(isAdmin && currentUserId && message.authorId && message.authorId === currentUserId),
+    (message: Message) =>
+      isAdmin || Boolean(currentUserId && message.authorId && message.authorId === currentUserId),
     [currentUserId, isAdmin],
   );
 
-  const canDeletePost = useCallback((message: Message) => canEditPost(message), [canEditPost]);
+  const canDeletePost = useCallback(
+    (message: Message) =>
+      isAdmin || Boolean(currentUserId && message.authorId && message.authorId === currentUserId),
+    [currentUserId, isAdmin],
+  );
 
   const canEditComment = useCallback(
-    (comment: Comment) => Boolean(comment.userId && currentUserId && comment.userId === currentUserId),
-    [currentUserId],
+    (comment: Comment) =>
+      isAdmin || Boolean(comment.userId && currentUserId && comment.userId === currentUserId),
+    [currentUserId, isAdmin],
   );
 
   const canDeleteComment = useCallback(
@@ -3481,7 +3487,7 @@ export default function HomePage() {
                     }}
                     onPointerDown={(e) => e.stopPropagation()}
                   >
-                    ⋯
+                    ⋮
                   </button>
                   {dmMenuOpen && (
                     <div className="post-actions-menu__list" role="menu">
@@ -4317,7 +4323,7 @@ export default function HomePage() {
                             }}
                             onPointerDown={(e) => e.stopPropagation()}
                           >
-                            ⋯
+                            ⋮
                           </button>
                           {postMenuOpen && (
                             <div className="post-actions-menu__list" role="menu">
@@ -4972,7 +4978,7 @@ export default function HomePage() {
                           }}
                           onPointerDown={(e) => e.stopPropagation()}
                         >
-                          ⋯
+                          ⋮
                         </button>
                         {commentMenuOpen && (
                           <div className="post-actions-menu__list" role="menu">
