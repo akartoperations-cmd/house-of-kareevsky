@@ -1105,13 +1105,16 @@ export default function HomePage() {
           // ignore
         }
 
-        const subscribed = await getOneSignalSubscriptionState(OneSignal);
+        const subscribed = OneSignal ? await getOneSignalSubscriptionState(OneSignal) : false;
         setPushDebug({
           ua: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
           standalone: isStandaloneDisplay(),
+          secureContext: typeof window !== 'undefined' ? window.isSecureContext : false,
+          origin: typeof window !== 'undefined' ? window.location.origin : 'unknown',
           permission: typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
           pushState: { pushPermission, pushEnabled },
           oneSignalLoaded: Boolean(OneSignal),
+          oneSignalGlobalPresent: typeof (window as any).OneSignal !== 'undefined',
           oneSignalSupported: isSupported,
           oneSignalSubscribed: subscribed,
           serviceWorkers: sw,
@@ -1123,10 +1126,31 @@ export default function HomePage() {
     [getOneSignalSubscriptionState, isPushDebugEnabled, pushEnabled, pushPermission],
   );
 
+  const withOneSignal = useCallback(
+    async (fn: (OneSignal: any) => Promise<void>) => {
+      if (typeof window === 'undefined') return;
+      let called = false;
+      const timer = window.setTimeout(() => {
+        if (called) return;
+        setPushLastError('OneSignal SDK did not respond (blocked or not loaded).');
+        pushToast('OneSignal SDK not loaded/blocked. Open with ?debugPush=1 for details.', 4000);
+        void collectPushDebug(undefined);
+      }, 1800);
+
+      window.OneSignalDeferred = window.OneSignalDeferred || [];
+      window.OneSignalDeferred.push(async (OneSignal) => {
+        called = true;
+        window.clearTimeout(timer);
+        await fn(OneSignal);
+      });
+    },
+    [collectPushDebug, pushToast],
+  );
+
   const handleToggleNotifications = useCallback(() => {
     if (typeof window === 'undefined') return;
-    window.OneSignalDeferred = window.OneSignalDeferred || [];
-    window.OneSignalDeferred.push(async (OneSignal) => {
+    void collectPushDebug(undefined);
+    void withOneSignal(async (OneSignal) => {
       let permission =
         typeof Notification === 'undefined' ? 'unsupported' : (Notification.permission as NotificationPermission);
       const isSubscribedBefore = await getOneSignalSubscriptionState(OneSignal);
@@ -1208,7 +1232,7 @@ export default function HomePage() {
       await syncPushStatus(OneSignal);
       await collectPushDebug(OneSignal);
     });
-  }, [collectPushDebug, getOneSignalSubscriptionState, pushToast, syncPushStatus]);
+  }, [collectPushDebug, getOneSignalSubscriptionState, pushToast, syncPushStatus, withOneSignal]);
   const pushState = useMemo<'on' | 'off' | 'denied'>(() => {
     if (pushPermission === 'denied' || pushPermission === 'unsupported') return 'denied';
     return pushEnabled ? 'on' : 'off';
@@ -1607,11 +1631,13 @@ export default function HomePage() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (!isPushDebugEnabled) return;
+    pushToast('Push debug enabled', 1500);
     window.OneSignalDeferred = window.OneSignalDeferred || [];
     window.OneSignalDeferred.push(async (OneSignal) => {
       await collectPushDebug(OneSignal);
     });
-  }, [collectPushDebug, isPushDebugEnabled]);
+    void collectPushDebug(undefined);
+  }, [collectPushDebug, isPushDebugEnabled, pushToast]);
 
   useEffect(() => {
     if (pushEnabled) {
