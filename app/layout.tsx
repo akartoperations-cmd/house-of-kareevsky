@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import Script from "next/script";
 import "./globals.css";
 
+const ONE_SIGNAL_APP_ID = process.env.NEXT_PUBLIC_ONESIGNAL_APP_ID || "129c2cca-f76f-43e0-aa03-8c63a19557ac";
+const ALLOW_LOCALHOST_AS_SECURE_ORIGIN = process.env.NODE_ENV !== "production";
+
 export const metadata: Metadata = {
   title: "House of Kareevsky",
   description: "A private messenger-like home for stories, songs and letters",
@@ -45,12 +48,12 @@ export default function RootLayout({
                 window.OneSignalDeferred = window.OneSignalDeferred || [];
                 window.OneSignalDeferred.push(function(OneSignal) {
                   OneSignal.init({
-                    appId: "129c2cca-f76f-43e0-aa03-8c63a19557ac",
+                    appId: "${ONE_SIGNAL_APP_ID}",
                     serviceWorkerPath: "/OneSignalSDKWorker.js",
                     serviceWorkerUpdaterPath: "/OneSignalSDKUpdaterWorker.js",
                     serviceWorkerParam: { scope: "/" },
                     notifyButton: { enable: false },
-                    allowLocalhostAsSecureOrigin: true
+                    allowLocalhostAsSecureOrigin: ${ALLOW_LOCALHOST_AS_SECURE_ORIGIN}
                   });
                 });
               }

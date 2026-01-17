@@ -1074,18 +1074,41 @@ export default function HomePage() {
     if (typeof window === 'undefined') return;
     window.OneSignalDeferred = window.OneSignalDeferred || [];
     window.OneSignalDeferred.push(async (OneSignal) => {
-      const permission =
+      let permission =
         typeof Notification === 'undefined' ? 'unsupported' : (Notification.permission as NotificationPermission);
       const isSubscribedBefore = await getOneSignalSubscriptionState(OneSignal);
       console.log('[push-debug] permission', permission, 'isSubscribed before', isSubscribedBefore);
 
       setPushPermission(permission === 'default' || permission === 'granted' || permission === 'denied' ? permission : 'unsupported');
 
+      if (permission === 'default') {
+        try {
+          if (OneSignal?.Notifications?.requestPermission) {
+            await OneSignal.Notifications.requestPermission();
+          } else if (OneSignal?.showNativePrompt) {
+            await OneSignal.showNativePrompt();
+          } else if (typeof Notification !== 'undefined' && typeof Notification.requestPermission === 'function') {
+            await Notification.requestPermission();
+          }
+        } catch (err) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('[push] Permission request failed', err);
+          }
+        }
+
+        permission =
+          typeof Notification === 'undefined' ? 'unsupported' : (Notification.permission as NotificationPermission);
+        setPushPermission(
+          permission === 'default' || permission === 'granted' || permission === 'denied' ? permission : 'unsupported',
+        );
+      }
+
       if (permission === 'denied' || permission === 'unsupported') {
         setPushEnabled(false);
         return;
       }
 
+      // If the user dismissed the prompt, permission can remain "default" — just sync UI state.
       if (permission === 'default') {
         await syncPushStatus(OneSignal);
         return;
@@ -1130,6 +1153,18 @@ export default function HomePage() {
       event.preventDefault();
       event.stopPropagation();
       if (pushState === 'denied') return;
+      // IMPORTANT: requesting Notification permission must happen in the direct click handler
+      // (otherwise browsers may block the prompt). We still use OneSignal for the actual subscribe/opt-in.
+      if (typeof Notification !== 'undefined' && typeof Notification.requestPermission === 'function') {
+        const perm = Notification.permission as NotificationPermission;
+        if (perm === 'default') {
+          const req = Notification.requestPermission();
+          void Promise.resolve(req as unknown).finally(() => {
+            handleToggleNotifications();
+          });
+          return;
+        }
+      }
       handleToggleNotifications();
     },
     [handleToggleNotifications, pushState],
@@ -1421,7 +1456,8 @@ export default function HomePage() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (!('serviceWorker' in navigator)) return;
-    navigator.serviceWorker.register('/sw.js').catch(() => {
+    // Avoid conflicting with OneSignal's Service Worker (which needs scope "/").
+    navigator.serviceWorker.register('/sw.js', { scope: '/sw/' }).catch(() => {
       // Registration is best-effort; offline caching can be added later.
     });
   }, []);
