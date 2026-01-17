@@ -1457,9 +1457,36 @@ export default function HomePage() {
     if (typeof window === 'undefined') return;
     if (!('serviceWorker' in navigator)) return;
     // Avoid conflicting with OneSignal's Service Worker (which needs scope "/").
-    navigator.serviceWorker.register('/sw.js', { scope: '/sw/' }).catch(() => {
-      // Registration is best-effort; offline caching can be added later.
-    });
+    // IMPORTANT: older versions of this app registered "/sw.js" with scope "/", which blocks OneSignal.
+    // We proactively unregister any legacy root-scoped "/sw.js" registration.
+    (async () => {
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(
+          regs.map(async (reg) => {
+            const scriptUrl =
+              reg.active?.scriptURL || reg.waiting?.scriptURL || reg.installing?.scriptURL || '';
+            if (!scriptUrl) return;
+            let pathname = '';
+            try {
+              pathname = new URL(scriptUrl).pathname;
+            } catch {
+              // ignore parse errors
+              return;
+            }
+            if (pathname === '/sw.js') {
+              await reg.unregister();
+            }
+          }),
+        );
+      } catch {
+        // ignore
+      }
+
+      navigator.serviceWorker.register('/sw.js', { scope: '/sw/' }).catch(() => {
+        // Registration is best-effort; offline caching can be added later.
+      });
+    })();
   }, []);
 
   useEffect(() => {
