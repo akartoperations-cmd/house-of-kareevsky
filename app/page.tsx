@@ -988,6 +988,8 @@ export default function HomePage() {
   const [pushEnabled, setPushEnabled] = useState(false);
   const [showPushBanner, setShowPushBanner] = useState(false);
   const [showInstallInstructions, setShowInstallInstructions] = useState(false);
+  const [pushDebug, setPushDebug] = useState<Record<string, unknown> | null>(null);
+  const [pushLastError, setPushLastError] = useState<string | null>(null);
   const getOneSignalSubscriptionState = useCallback(
     async (OneSignalInstance?: any) => {
       const OneSignal = OneSignalInstance;
@@ -1070,6 +1072,52 @@ export default function HomePage() {
     syncPushStatus();
   }, [syncPushStatus]);
 
+  const isPushDebugEnabled = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return new URLSearchParams(window.location.search).get('debugPush') === '1';
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const collectPushDebug = useCallback(
+    async (OneSignalInstance?: any) => {
+      if (!isPushDebugEnabled || typeof window === 'undefined') return;
+      const OneSignal = OneSignalInstance;
+      try {
+        const regs = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistrations() : [];
+        const sw = regs.map((r) => {
+          const scriptUrl = r.active?.scriptURL || r.waiting?.scriptURL || r.installing?.scriptURL || '';
+          return { scope: r.scope, scriptURL: scriptUrl };
+        });
+        let isSupported: boolean | null = null;
+        try {
+          if (OneSignal?.Notifications?.isPushSupported) {
+            isSupported = Boolean(await OneSignal.Notifications.isPushSupported());
+          }
+        } catch {
+          // ignore
+        }
+
+        const subscribed = await getOneSignalSubscriptionState(OneSignal);
+        setPushDebug({
+          ua: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
+          standalone: isStandaloneDisplay(),
+          permission: typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
+          pushState: { pushPermission, pushEnabled },
+          oneSignalLoaded: Boolean(OneSignal),
+          oneSignalSupported: isSupported,
+          oneSignalSubscribed: subscribed,
+          serviceWorkers: sw,
+        });
+      } catch (err) {
+        setPushDebug({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+    [getOneSignalSubscriptionState, isPushDebugEnabled, pushEnabled, pushPermission],
+  );
+
   const handleToggleNotifications = useCallback(() => {
     if (typeof window === 'undefined') return;
     window.OneSignalDeferred = window.OneSignalDeferred || [];
@@ -1078,10 +1126,12 @@ export default function HomePage() {
         typeof Notification === 'undefined' ? 'unsupported' : (Notification.permission as NotificationPermission);
       const isSubscribedBefore = await getOneSignalSubscriptionState(OneSignal);
       console.log('[push-debug] permission', permission, 'isSubscribed before', isSubscribedBefore);
+      setPushLastError(null);
 
       setPushPermission(permission === 'default' || permission === 'granted' || permission === 'denied' ? permission : 'unsupported');
 
       if (permission === 'default') {
+        showToast('Requesting notification permission…', 2000);
         try {
           if (OneSignal?.Notifications?.requestPermission) {
             await OneSignal.Notifications.requestPermission();
@@ -1105,16 +1155,19 @@ export default function HomePage() {
 
       if (permission === 'denied' || permission === 'unsupported') {
         setPushEnabled(false);
+        showToast('Notifications are blocked by browser settings.', 3000);
         return;
       }
 
       // If the user dismissed the prompt, permission can remain "default" — just sync UI state.
       if (permission === 'default') {
         await syncPushStatus(OneSignal);
+        await collectPushDebug(OneSignal);
         return;
       }
 
       try {
+        showToast(isSubscribedBefore ? 'Turning notifications off…' : 'Turning notifications on…', 2000);
         if (isSubscribedBefore) {
           if (OneSignal?.User?.PushSubscription?.optOut) {
             await OneSignal.User.PushSubscription.optOut();
@@ -1133,6 +1186,7 @@ export default function HomePage() {
           }
         }
       } catch (err) {
+        setPushLastError(err instanceof Error ? err.message : String(err));
         if (process.env.NODE_ENV !== 'production') {
           console.warn('[push] Toggle failed', err);
         }
@@ -1140,10 +1194,16 @@ export default function HomePage() {
 
       const isSubscribedAfter = await getOneSignalSubscriptionState(OneSignal);
       console.log('[push-debug] isSubscribed after', isSubscribedAfter);
+      if (!isSubscribedAfter) {
+        showToast('Push subscription did not activate. Open with ?debugPush=1 to see why.', 4000);
+      } else {
+        showToast('Notifications enabled.', 2000);
+      }
 
       await syncPushStatus(OneSignal);
+      await collectPushDebug(OneSignal);
     });
-  }, [getOneSignalSubscriptionState, syncPushStatus]);
+  }, [collectPushDebug, getOneSignalSubscriptionState, showToast, syncPushStatus]);
   const pushState = useMemo<'on' | 'off' | 'denied'>(() => {
     if (pushPermission === 'denied' || pushPermission === 'unsupported') return 'denied';
     return pushEnabled ? 'on' : 'off';
@@ -1538,6 +1598,15 @@ export default function HomePage() {
       if (permStatus) permStatus.onchange = null;
     };
   }, [refreshPushStatus]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!isPushDebugEnabled) return;
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    window.OneSignalDeferred.push(async (OneSignal) => {
+      await collectPushDebug(OneSignal);
+    });
+  }, [collectPushDebug, isPushDebugEnabled]);
 
   useEffect(() => {
     if (pushEnabled) {
@@ -4713,6 +4782,38 @@ export default function HomePage() {
                   }}
                 >
                   Notifications are blocked in your browser/phone settings. Enable permission for this site, then return here.
+                </div>
+              )}
+              {isPushDebugEnabled && (
+                <div
+                  style={{
+                    marginTop: '8px',
+                    marginBottom: '8px',
+                    background: 'rgba(255,255,255,0.06)',
+                    border: '1px solid rgba(255,255,255,0.10)',
+                    borderRadius: '10px',
+                    padding: '10px 12px',
+                    color: 'rgba(255,255,255,0.85)',
+                    fontSize: '12px',
+                    lineHeight: 1.35,
+                    fontFamily: 'var(--font-ui)',
+                  }}
+                >
+                  <div style={{ marginBottom: '6px', opacity: 0.9 }}>Push debug (`debugPush=1`)</div>
+                  {pushLastError && (
+                    <div style={{ marginBottom: '6px', color: 'rgba(255,210,210,0.95)' }}>Last error: {pushLastError}</div>
+                  )}
+                  <pre
+                    style={{
+                      margin: 0,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      maxHeight: '200px',
+                      overflow: 'auto',
+                    }}
+                  >
+                    {JSON.stringify(pushDebug, null, 2)}
+                  </pre>
                 </div>
               )}
               <button className="bottom-sheet__item" onClick={() => navigateTo('gallery')}>
