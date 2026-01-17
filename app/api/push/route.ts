@@ -37,7 +37,7 @@ const errorResponse = (message: string, status = 400) =>
   NextResponse.json({ ok: false, error: message }, { status });
 
 export async function POST(req: Request) {
-  const appId = process.env.ONESIGNAL_APP_ID;
+  const appId = process.env.ONESIGNAL_APP_ID || process.env.NEXT_PUBLIC_ONESIGNAL_APP_ID;
   const restKey = process.env.ONESIGNAL_REST_API_KEY;
   const adminUserId = process.env.ADMIN_USER_ID || process.env.ADMIN_EMAIL || process.env.NEXT_PUBLIC_ADMIN_USER_ID;
 
