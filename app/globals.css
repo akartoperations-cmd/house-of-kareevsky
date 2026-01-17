@@ -561,6 +561,43 @@ button:focus {
   color: #ffd6d6;
 }
 
+.inline-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 0.2s, transform 0.15s;
+}
+
+.inline-btn:hover {
+  background: var(--accent-hover);
+}
+
+.inline-btn:active {
+  transform: scale(0.96);
+}
+
+.inline-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.inline-btn--ghost {
+  background: transparent;
+  color: var(--text-ink);
+  border: 1px solid rgba(0,0,0,0.1);
+}
+
+.inline-btn--ghost:hover {
+  background: rgba(0,0,0,0.05);
+}
+
 .sticky-date {
   position: fixed;
   top: 76px;

@@ -4310,59 +4310,88 @@ export default function HomePage() {
                 if (postMenuOpen && process.env.NODE_ENV !== 'production') {
                   console.log('[menu-debug] Rendering menu list for:', message.id);
                 }
+                const postActionMenu = showPostActionsMenu ? (
+                  <div
+                    className="post-actions-menu"
+                    style={{
+                      position: 'relative',
+                      top: 'auto',
+                      right: 'auto',
+                      display: 'inline-flex',
+                      verticalAlign: 'middle',
+                      marginLeft: '6px',
+                      zIndex: 10
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      className="post-actions-menu__trigger"
+                      style={{
+                        width: '20px',
+                        height: '20px',
+                        fontSize: '16px',
+                        background: 'transparent',
+                        border: 'none',
+                        boxShadow: 'none',
+                        color: 'inherit',
+                        padding: 0,
+                        opacity: 0.7
+                      }}
+                      aria-haspopup="menu"
+                      aria-expanded={postMenuOpen}
+                      aria-label="Post actions"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        togglePostActionsMenu(message.id);
+                      }}
+                    >
+                      ⋮
+                    </button>
+                    {postMenuOpen && (
+                      <div
+                        className="post-actions-menu__list"
+                        role="menu"
+                        style={{
+                          top: '24px',
+                          right: '-8px',
+                          width: '120px',
+                          minWidth: 'unset'
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="post-actions-menu__item"
+                          role="menuitem"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startEditPost(message);
+                          }}
+                        >
+                          Edit
+                        </button>
+                        {canDeleteThisPost && (
+                          <button
+                            type="button"
+                            className="post-actions-menu__item post-actions-menu__item--danger"
+                            role="menuitem"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deletePost(message);
+                            }}
+                            disabled={postDeletingId === message.id}
+                          >
+                            {postDeletingId === message.id ? 'Deleting…' : 'Delete'}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : undefined;
+
                 return (
                   <div key={message.id} className="feed-item">
                     <div className="post-card">
-                      {showPostActionsMenu && (
-                        <div
-                          className="post-actions-menu"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <button
-                            type="button"
-                            className="post-actions-menu__trigger"
-                            aria-haspopup="menu"
-                            aria-expanded={postMenuOpen}
-                            aria-label="Post actions"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              console.log('[menu-debug] Trigger clicked, postMenuOpen before:', postMenuOpen, 'messageId:', message.id);
-                              togglePostActionsMenu(message.id);
-                            }}
-                          >
-                            ⋮
-                          </button>
-                          {postMenuOpen && (
-                            <div className="post-actions-menu__list" role="menu">
-                              <button
-                                type="button"
-                                className="post-actions-menu__item"
-                                role="menuitem"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  startEditPost(message);
-                                }}
-                              >
-                                Edit
-                              </button>
-                              {canDeleteThisPost && (
-                                <button
-                                  type="button"
-                                  className="post-actions-menu__item post-actions-menu__item--danger"
-                                  role="menuitem"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    deletePost(message);
-                                  }}
-                                  disabled={postDeletingId === message.id}
-                                >
-                                  {postDeletingId === message.id ? 'Deleting…' : 'Delete'}
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
                       {isEditingThisPost && canEditThisPost && (
                         <div
                           onClickCapture={(e) => e.stopPropagation()}
@@ -4398,7 +4427,7 @@ export default function HomePage() {
                               disabled={postSavingId === message.id}
                               style={{ padding: '6px 10px' }}
                             >
-                              {postSavingId === message.id ? 'Saving…' : 'Save'}
+                              {postSavingId === message.id ? 'Saving…' : 'OK'}
                             </button>
                             <button
                               type="button"
@@ -4433,6 +4462,7 @@ export default function HomePage() {
                             : undefined
                         }
                         pollIsVoting={message.pollId ? Boolean(pollVoteLoadingById[message.pollId]) : false}
+                        actionMenu={postActionMenu}
                       />
                     </div>
                   </div>
@@ -5019,11 +5049,7 @@ export default function HomePage() {
                       }}
                     >
                       {comment.author}
-                      {comment.updatedAt && (
-                        <span style={{ marginLeft: '8px', color: 'var(--text-secondary)', fontSize: '11px' }}>
-                          (edited)
-                        </span>
-                      )}
+                      {/* (edited) label removed */}
                     </div>
                     {editingCommentId === comment.id ? (
                       <>
@@ -5041,7 +5067,7 @@ export default function HomePage() {
                             onClick={() => saveCommentEdit(comment)}
                             disabled={commentSavingId === comment.id}
                           >
-                            {commentSavingId === comment.id ? 'Saving…' : 'Save'}
+                            {commentSavingId === comment.id ? 'Saving…' : 'OK'}
                           </button>
                           <button className="inline-btn inline-btn--ghost" onClick={cancelEditComment}>
                             Cancel
@@ -5158,6 +5184,7 @@ interface MessageBubbleProps {
   onShowToast: (text: string, timeoutMs?: number) => void;
   onVoteOption?: (optionId: string) => void;
   pollIsVoting?: boolean;
+  actionMenu?: React.ReactNode;
 }
 
 function MessageBubble({
@@ -5174,6 +5201,7 @@ function MessageBubble({
   onShowToast,
   onVoteOption,
   pollIsVoting,
+  actionMenu,
 }: MessageBubbleProps) {
   const [i18nSelectedLang, setI18nSelectedLang] = useState<I18nLang>('en');
   const [i18nImageIndex, setI18nImageIndex] = useState(0);
@@ -5238,6 +5266,7 @@ function MessageBubble({
             <p className="message__handwriting">{renderLinkifiedText(content || '')}</p>
             <div className="message__meta">
               {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
+            {actionMenu}
             </div>
           </div>
 
@@ -5353,6 +5382,7 @@ function MessageBubble({
           </div>
           <div className="i18n-carousel__meta">
             {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
+            {actionMenu}
           </div>
         </div>
 
@@ -5449,6 +5479,7 @@ function MessageBubble({
           {/* Date shown at bottom-right next to time */}
           <div className="message__meta">
             {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
+            {actionMenu}
           </div>
         </div>
       {reaction && <div className="message__reaction">{reaction}</div>}
@@ -5521,6 +5552,7 @@ function MessageBubble({
           {/* Date shown at bottom-right next to time */}
           <div className="message__meta message__meta--photo">
             {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
+            {actionMenu}
           </div>
         </div>
 
@@ -5580,6 +5612,7 @@ function MessageBubble({
           />
           <div className="message__meta">
             {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
+            {actionMenu}
           </div>
         </div>
 
@@ -5644,6 +5677,7 @@ function MessageBubble({
           />
           <div className="message__meta message__meta--photo">
             {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
+            {actionMenu}
           </div>
         </div>
 
@@ -5690,6 +5724,7 @@ function MessageBubble({
         {/* Date shown at bottom-right next to time */}
         <div className="message__meta">
           {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
+            {actionMenu}
         </div>
       </div>
 
