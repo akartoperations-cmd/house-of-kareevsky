@@ -990,6 +990,11 @@ export default function HomePage() {
   const [showInstallInstructions, setShowInstallInstructions] = useState(false);
   const [pushDebug, setPushDebug] = useState<Record<string, unknown> | null>(null);
   const [pushLastError, setPushLastError] = useState<string | null>(null);
+
+  const pushToast = useCallback((text: string, timeoutMs = 2500) => {
+    setToastMessage(text);
+    setTimeout(() => setToastMessage(null), timeoutMs);
+  }, []);
   const getOneSignalSubscriptionState = useCallback(
     async (OneSignalInstance?: any) => {
       const OneSignal = OneSignalInstance;
@@ -1131,7 +1136,7 @@ export default function HomePage() {
       setPushPermission(permission === 'default' || permission === 'granted' || permission === 'denied' ? permission : 'unsupported');
 
       if (permission === 'default') {
-        showToast('Requesting notification permission…', 2000);
+        pushToast('Requesting notification permission…', 2000);
         try {
           if (OneSignal?.Notifications?.requestPermission) {
             await OneSignal.Notifications.requestPermission();
@@ -1155,7 +1160,7 @@ export default function HomePage() {
 
       if (permission === 'denied' || permission === 'unsupported') {
         setPushEnabled(false);
-        showToast('Notifications are blocked by browser settings.', 3000);
+        pushToast('Notifications are blocked by browser settings.', 3000);
         return;
       }
 
@@ -1167,7 +1172,7 @@ export default function HomePage() {
       }
 
       try {
-        showToast(isSubscribedBefore ? 'Turning notifications off…' : 'Turning notifications on…', 2000);
+        pushToast(isSubscribedBefore ? 'Turning notifications off…' : 'Turning notifications on…', 2000);
         if (isSubscribedBefore) {
           if (OneSignal?.User?.PushSubscription?.optOut) {
             await OneSignal.User.PushSubscription.optOut();
@@ -1195,15 +1200,15 @@ export default function HomePage() {
       const isSubscribedAfter = await getOneSignalSubscriptionState(OneSignal);
       console.log('[push-debug] isSubscribed after', isSubscribedAfter);
       if (!isSubscribedAfter) {
-        showToast('Push subscription did not activate. Open with ?debugPush=1 to see why.', 4000);
+        pushToast('Push subscription did not activate. Open with ?debugPush=1 to see why.', 4000);
       } else {
-        showToast('Notifications enabled.', 2000);
+        pushToast('Notifications enabled.', 2000);
       }
 
       await syncPushStatus(OneSignal);
       await collectPushDebug(OneSignal);
     });
-  }, [collectPushDebug, getOneSignalSubscriptionState, showToast, syncPushStatus]);
+  }, [collectPushDebug, getOneSignalSubscriptionState, pushToast, syncPushStatus]);
   const pushState = useMemo<'on' | 'off' | 'denied'>(() => {
     if (pushPermission === 'denied' || pushPermission === 'unsupported') return 'denied';
     return pushEnabled ? 'on' : 'off';
