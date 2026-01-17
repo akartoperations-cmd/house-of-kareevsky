@@ -4394,7 +4394,7 @@ export default function HomePage() {
                     <div className="post-card">
                       {isEditingThisPost && canEditThisPost && (
                         <div
-                          onClickCapture={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
                           onPointerDown={(e) => e.stopPropagation()}
                           style={{
                             display: 'flex',
