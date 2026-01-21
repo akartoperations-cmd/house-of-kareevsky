@@ -36,7 +36,9 @@ const payloadToObject = async (request: Request): Promise<IncomingPayload> => {
   const rawText = await request.text().catch(() => '');
   const params = new URLSearchParams(rawText);
   const obj: IncomingPayload = {};
-  for (const [k, v] of params.entries()) obj[k] = v;
+  params.forEach((v, k) => {
+    obj[k] = v;
+  });
   return obj;
 };
 
