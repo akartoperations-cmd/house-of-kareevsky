@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { isEmailEligible, normalizeEmail } from '@/app/lib/access';
+import { isAdminEmail, isEmailEligible, normalizeEmail } from '@/app/lib/access';
 import { getSupabaseServerClient } from '@/app/lib/supabaseServerClient';
+import { getSupabaseServiceClient } from '@/app/lib/supabaseServiceClient';
 
 export const runtime = 'nodejs';
 
@@ -25,12 +26,37 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid email.' }, { status: 400 });
     }
 
-    // TODO: Replace allowlist check with Digistore24 webhook-backed eligibility storage.
-    if (!isEmailEligible(email)) {
-      return NextResponse.json(
-        { error: 'No active access for this email. Please use Enter.' },
-        { status: 403 },
-      );
+    // Access is granted by:
+    // - ADMIN_EMAIL, or
+    // - public.subscriptions where status = 'active' for this email.
+    //
+    // ACCESS_ALLOWLIST_EMAILS is kept only as an emergency fallback when DB check is unavailable.
+    const isAdmin = isAdminEmail(email);
+    if (!isAdmin) {
+      const dataClient = getSupabaseServiceClient() || getSupabaseServerClient();
+      if (!dataClient) {
+        return NextResponse.json({ error: 'Auth service is not configured.' }, { status: 500 });
+      }
+
+      let hasActive = false;
+      try {
+        const { data, error } = await dataClient
+          .from('subscriptions')
+          .select('id,status')
+          .eq('email', email)
+          .eq('status', 'active')
+          .limit(1);
+        if (error) throw error;
+        hasActive = Array.isArray(data) && data.length > 0;
+      } catch (err) {
+        console.warn('[access/send-link] Subscription check failed; evaluating emergency allowlist fallback.', err);
+        // Emergency mode: only when DB check fails.
+        hasActive = isEmailEligible(email);
+      }
+
+      if (!hasActive) {
+        return NextResponse.json({ error: 'Access not active. Please use Enter.' }, { status: 403 });
+      }
     }
 
     const supabase = getSupabaseServerClient();

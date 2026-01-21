@@ -13,31 +13,14 @@ type AccessState = {
   status: AccessStatus;
   session: Session | null;
   isAdmin: boolean;
-  isSubscriber: boolean;
+  hasActiveSubscription: boolean;
 };
 
-const subscriptionKeys = [
-  'subscription_status',
-  'subscriptionStatus',
-  'subscription',
-  'plan_status',
-  'planStatus',
-  'isSubscriber',
-  'is_subscriber',
-  'subscriber',
-  'paid',
-];
-
-const hasActiveSubscription = (session: Session | null) => {
-  if (!session) return false;
-  const metaSources = [session.user.app_metadata, session.user.user_metadata];
-
-  return metaSources.some((meta) =>
-    subscriptionKeys.some((key) => {
-      const value = (meta as Record<string, unknown> | undefined)?.[key];
-      return value === true || value === 'active' || value === 'trialing';
-    }),
-  );
+type SubscriptionRow = {
+  id: string;
+  user_id: string | null;
+  email: string;
+  status: string;
 };
 
 export function useAccessRedirect(target: AccessGuardTarget): AccessState {
@@ -47,7 +30,7 @@ export function useAccessRedirect(target: AccessGuardTarget): AccessState {
     status: 'checking',
     session: null,
     isAdmin: false,
-    isSubscriber: false,
+    hasActiveSubscription: false,
   });
 
   const redirectingRef = useRef(false);
@@ -127,22 +110,89 @@ export function useAccessRedirect(target: AccessGuardTarget): AccessState {
 
     let cancelled = false;
 
+    const checkSubscriptionActive = async (nextSession: Session | null): Promise<boolean> => {
+      if (!nextSession) return false;
+
+      const email = normalizeEmail(nextSession.user?.email);
+      const userId = nextSession.user?.id || null;
+
+      try {
+        // Prefer user_id match when available (stronger link), then fallback to email.
+        if (userId) {
+          const { data, error } = await supabase
+            .from('subscriptions')
+            .select('id,user_id,email,status')
+            .eq('user_id', userId)
+            .eq('status', 'active')
+            .limit(1);
+          if (error) throw error;
+          if ((data as SubscriptionRow[] | null)?.length) return true;
+        }
+
+        if (email) {
+          const { data, error } = await supabase
+            .from('subscriptions')
+            .select('id,user_id,email,status')
+            .eq('email', email)
+            .eq('status', 'active')
+            .limit(1);
+          if (error) throw error;
+          const row = (data as SubscriptionRow[] | null | undefined)?.[0];
+          if (!row) return false;
+
+          // Best-effort: bind user_id on first successful login.
+          if (userId && !row.user_id) {
+            try {
+              await supabase.from('subscriptions').update({ user_id: userId }).eq('id', row.id);
+            } catch (err) {
+              if (process.env.NODE_ENV !== 'production') {
+                console.warn('[access] Failed to bind subscription user_id', err);
+              }
+            }
+          }
+          return true;
+        }
+
+        return false;
+      } catch (err) {
+        // Do not crash on missing tables or network errors; default to safe denial.
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[access] Subscription check failed (default deny)', err);
+        }
+        return false;
+      }
+    };
+
     const evaluateAccess = async (nextSession: Session | null) => {
       const email = normalizeEmail(nextSession?.user?.email);
       const isAdmin = await checkAdmin(email);
-      const isSubscriber = isAdmin || hasActiveSubscription(nextSession) || Boolean(nextSession);
+      const hasSubscription = isAdmin ? true : await checkSubscriptionActive(nextSession);
       const onWelcome = pathname === '/welcome' || pathname?.startsWith('/welcome/');
 
       if (cancelled) return;
 
-      if (target === 'feed' && !isAdmin && !isSubscriber) {
-        setState({ status: 'redirecting', session: nextSession, isAdmin, isSubscriber });
+      // If the user has a session but no active subscription (and is not admin), force sign-out and redirect.
+      if (nextSession && !isAdmin && !hasSubscription) {
+        try {
+          await supabase.auth.signOut();
+        } catch (err) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('[access] signOut failed', err);
+          }
+        }
+        setState({ status: 'redirecting', session: null, isAdmin, hasActiveSubscription: false });
         ensureRedirect('/welcome');
         return;
       }
 
-      if (target === 'welcome' && (isAdmin || isSubscriber)) {
-        setState({ status: 'redirecting', session: nextSession, isAdmin, isSubscriber });
+      if (target === 'feed' && !isAdmin && !hasSubscription) {
+        setState({ status: 'redirecting', session: nextSession, isAdmin, hasActiveSubscription: hasSubscription });
+        ensureRedirect('/welcome');
+        return;
+      }
+
+      if (target === 'welcome' && (isAdmin || hasSubscription)) {
+        setState({ status: 'redirecting', session: nextSession, isAdmin, hasActiveSubscription: hasSubscription });
         if (onWelcome) {
           ensureRedirect('/');
         }
@@ -150,7 +200,7 @@ export function useAccessRedirect(target: AccessGuardTarget): AccessState {
       }
 
       redirectingRef.current = false;
-      setState({ status: 'allowed', session: nextSession, isAdmin, isSubscriber });
+      setState({ status: 'allowed', session: nextSession, isAdmin, hasActiveSubscription: hasSubscription });
     };
 
     supabase.auth

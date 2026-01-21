@@ -16,7 +16,7 @@ const STORY_BLOCKS = [
   'The world of art is going through a unique evolution and I am one of the first who begins it. I do not follow corporations! I decided to create my own app and space for my art, and instead of getting 0.003 dollars per listen and somehow saving up, I decided to create my own place where I will be all me and all my art and I will be much closer than Patreon and YouTube or Spotify. Even 300 people who buy a subscription already give me the opportunity to create much more and without restrictions. And I will be able to devote all my time to art and dedicate my life to it.',
 ];
 
-const checkoutUrl = process.env.NEXT_PUBLIC_DIGISTORE_CHECKOUT_URL || '';
+const checkoutUrl = process.env.NEXT_PUBLIC_DIGISTORE24_CHECKOUT_URL || '';
 const checkoutConfigured = Boolean(checkoutUrl);
 
 const platformIcons: Record<ExternalPlatform['icon'], JSX.Element> = {
@@ -51,6 +51,7 @@ export default function WelcomePage() {
 
   const handleEnter = () => {
     if (!checkoutConfigured) {
+      setStatus({ type: 'error', message: 'Checkout is not configured yet.' });
       return;
     }
     window.location.href = checkoutUrl;
@@ -127,31 +128,21 @@ export default function WelcomePage() {
           ))}
 
           <div className="welcome-actions">
-            {step === 1 && (
-              <>
-                <button className="welcome-button" onClick={handleTellMeMore}>
-                  Tell me more
-                </button>
-                <button className="welcome-button welcome-button--primary" onClick={handleEnter}>
-                  Enter
-                </button>
-              </>
-            )}
-
-            {step === 2 && (
-              <>
-                <button className="welcome-button welcome-button--primary" onClick={handleEnter}>
-                  Enter
-                </button>
-                <button className="welcome-button" onClick={handleTellMeMore}>
-                  Tell me more
-                </button>
-              </>
-            )}
-
-            {step === 3 && (
-              <button className="welcome-button welcome-button--primary" onClick={handleEnter}>
-                Enter
+            <button className="welcome-button welcome-button--primary" onClick={handleEnter}>
+              Enter
+            </button>
+            <button
+              className="welcome-button welcome-button--ghost"
+              onClick={() => {
+                setShowReturnerForm(true);
+                setStatus(null);
+              }}
+            >
+              I already have access
+            </button>
+            {step < 3 && (
+              <button className="welcome-button" onClick={handleTellMeMore}>
+                Tell me more
               </button>
             )}
           </div>
@@ -181,21 +172,7 @@ export default function WelcomePage() {
             </div>
           )}
 
-          {!checkoutConfigured && (
-            <div className="welcome-inline-message">Checkout is not configured yet.</div>
-          )}
-
           <div className="welcome-returning">
-            <button
-              className="welcome-button welcome-button--ghost"
-              onClick={() => {
-                setShowReturnerForm((prev) => !prev);
-                setStatus(null);
-              }}
-            >
-              I already entered before
-            </button>
-
             {showReturnerForm && (
               <form
                 className="welcome-returning__form"
@@ -223,7 +200,7 @@ export default function WelcomePage() {
                   className="welcome-button welcome-button--primary welcome-button--wide"
                   disabled={sending}
                 >
-                  {sending ? 'Sending…' : 'Send me my link'}
+                  {sending ? 'Sending…' : 'Send access link'}
                 </button>
               </form>
             )}
