@@ -16,13 +16,6 @@ type AccessState = {
   hasActiveSubscription: boolean;
 };
 
-type SubscriptionRow = {
-  id: string;
-  user_id: string | null;
-  email: string;
-  status: string;
-};
-
 export function useAccessRedirect(target: AccessGuardTarget): AccessState {
   const router = useRouter();
   const pathname = usePathname();
@@ -116,46 +109,22 @@ export function useAccessRedirect(target: AccessGuardTarget): AccessState {
       const email = normalizeEmail(nextSession.user?.email);
       const userId = nextSession.user?.id || null;
 
+      // Server-side check via service role (no client grants needed).
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
       try {
-        // Prefer user_id match when available (stronger link), then fallback to email.
-        if (userId) {
-          const { data, error } = await supabase
-            .from('subscriptions')
-            .select('id,user_id,email,status')
-            .eq('user_id', userId)
-            .eq('status', 'active')
-            .limit(1);
-          if (error) throw error;
-          if ((data as SubscriptionRow[] | null)?.length) return true;
-        }
-
-        if (email) {
-          const { data, error } = await supabase
-            .from('subscriptions')
-            .select('id,user_id,email,status')
-            .eq('email', email)
-            .eq('status', 'active')
-            .limit(1);
-          if (error) throw error;
-          const row = (data as SubscriptionRow[] | null | undefined)?.[0];
-          if (!row) return false;
-
-          // Best-effort: bind user_id on first successful login.
-          if (userId && !row.user_id) {
-            try {
-              await supabase.from('subscriptions').update({ user_id: userId }).eq('id', row.id);
-            } catch (err) {
-              if (process.env.NODE_ENV !== 'production') {
-                console.warn('[access] Failed to bind subscription user_id', err);
-              }
-            }
-          }
-          return true;
-        }
-
-        return false;
+        const res = await fetch('/api/access/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, userId }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (!res.ok) return false;
+        const data = (await res.json().catch(() => ({}))) as { active?: boolean };
+        return Boolean(data?.active);
       } catch (err) {
-        // Do not crash on missing tables or network errors; default to safe denial.
+        clearTimeout(timeout);
         if (process.env.NODE_ENV !== 'production') {
           console.warn('[access] Subscription check failed (default deny)', err);
         }

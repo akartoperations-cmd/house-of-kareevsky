@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { isAdminEmail, isEmailEligible, normalizeEmail } from '@/app/lib/access';
+import { isAdminEmail, normalizeEmail } from '@/app/lib/access';
 import { getSupabaseServerClient } from '@/app/lib/supabaseServerClient';
 import { getSupabaseServiceClient } from '@/app/lib/supabaseServiceClient';
 
@@ -29,33 +29,29 @@ export async function POST(request: Request) {
     // Access is granted by:
     // - ADMIN_EMAIL, or
     // - public.subscriptions where status = 'active' for this email.
-    //
-    // ACCESS_ALLOWLIST_EMAILS is kept only as an emergency fallback when DB check is unavailable.
     const isAdmin = isAdminEmail(email);
     if (!isAdmin) {
-      const dataClient = getSupabaseServiceClient() || getSupabaseServerClient();
+      const dataClient = getSupabaseServiceClient();
       if (!dataClient) {
-        return NextResponse.json({ error: 'Auth service is not configured.' }, { status: 500 });
+        console.warn('[access/send-link] SUPABASE_SERVICE_ROLE_KEY not configured; cannot verify access.');
+        return NextResponse.json({ error: 'Unable to verify access right now.' }, { status: 503 });
       }
 
-      let hasActive = false;
       try {
         const { data, error } = await dataClient
           .from('subscriptions')
           .select('id,status')
-          .eq('email', email)
+          .ilike('email', email)
           .eq('status', 'active')
           .limit(1);
         if (error) throw error;
-        hasActive = Array.isArray(data) && data.length > 0;
+        const hasActive = Array.isArray(data) && data.length > 0;
+        if (!hasActive) {
+          return NextResponse.json({ error: 'Access not active. Please use Enter.' }, { status: 403 });
+        }
       } catch (err) {
-        console.warn('[access/send-link] Subscription check failed; evaluating emergency allowlist fallback.', err);
-        // Emergency mode: only when DB check fails.
-        hasActive = isEmailEligible(email);
-      }
-
-      if (!hasActive) {
-        return NextResponse.json({ error: 'Access not active. Please use Enter.' }, { status: 403 });
+        console.error('[access/send-link] Subscription check failed.', err);
+        return NextResponse.json({ error: 'Unable to verify access right now.' }, { status: 503 });
       }
     }
 

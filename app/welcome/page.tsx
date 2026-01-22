@@ -79,7 +79,7 @@ export default function WelcomePage() {
       if (!res.ok) {
         setStatus({
           type: 'error',
-          message: data?.error || 'Unable to send link right now.',
+          message: data?.error || 'Unable to verify access right now.',
         });
         return;
       }
@@ -213,6 +213,14 @@ export default function WelcomePage() {
                 role="status"
               >
                 {status.message}
+              </div>
+            )}
+
+            {status?.type === 'error' && (
+              <div className="welcome-actions" style={{ marginTop: 16 }}>
+                <button className="welcome-button welcome-button--primary" onClick={handleEnter}>
+                  Enter
+                </button>
               </div>
             )}
           </div>

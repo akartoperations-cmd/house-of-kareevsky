@@ -1,19 +1,11 @@
--- Idempotent SQL script for Supabase SQL Editor
+-- Final idempotent SQL script for Supabase SQL Editor
 -- Creates: public.subscriptions
 -- Notes:
--- - RLS is disabled intentionally (policies will be added later).
--- - Reuses public.touch_updated_at() trigger function if it already exists.
+-- - Does NOT touch RLS/policies (we will set them later).
+-- - Does NOT GRANT anon/authenticated INSERT/UPDATE/DELETE.
+-- - Does NOT overwrite any shared touch_updated_at() function.
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
--- Reuse or create updated_at helper.
-CREATE OR REPLACE FUNCTION public.touch_updated_at()
-RETURNS TRIGGER AS $$
-BEGIN
-  NEW.updated_at = NOW();
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
 
 CREATE TABLE IF NOT EXISTS public.subscriptions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -30,18 +22,38 @@ CREATE TABLE IF NOT EXISTS public.subscriptions (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-ALTER TABLE public.subscriptions DISABLE ROW LEVEL SECURITY;
-
 -- Indexes
-CREATE INDEX IF NOT EXISTS idx_subscriptions_email ON public.subscriptions (email);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_email_lower ON public.subscriptions (lower(email));
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON public.subscriptions (user_id);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON public.subscriptions (status);
 
--- Idempotency key for webhook upsert
-CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_email_order_id_uidx
-ON public.subscriptions (email, digistore_order_id);
+-- Idempotency for webhooks: prevent duplicates when order_id exists (case-insensitive by email)
+CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_email_lower_order_id_uidx
+ON public.subscriptions (lower(email), digistore_order_id)
+WHERE digistore_order_id IS NOT NULL;
 
--- updated_at trigger
+-- updated_at: dedicated function for this table only
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE p.proname = 'touch_updated_at_subscriptions'
+      AND n.nspname = 'public'
+  ) THEN
+    EXECUTE $fn$
+      CREATE FUNCTION public.touch_updated_at_subscriptions()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        NEW.updated_at = NOW();
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+    $fn$;
+  END IF;
+END$$;
+
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -50,11 +62,15 @@ BEGIN
     CREATE TRIGGER trg_subscriptions_touch_updated_at
     BEFORE UPDATE ON public.subscriptions
     FOR EACH ROW
-    EXECUTE FUNCTION public.touch_updated_at();
+    EXECUTE FUNCTION public.touch_updated_at_subscriptions();
   END IF;
 END$$;
 
--- Grants (RLS disabled; align with existing content tables)
-GRANT USAGE ON SCHEMA public TO anon, authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.subscriptions TO anon, authenticated;
+-- Allow service_role to manage this table (required for webhook and server-side access checks)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON public.subscriptions TO service_role;
+  END IF;
+END$$;
 

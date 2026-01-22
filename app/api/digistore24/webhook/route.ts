@@ -45,7 +45,10 @@ const payloadToObject = async (request: Request): Promise<IncomingPayload> => {
 const validateSecret = (request: Request, payload: IncomingPayload): { ok: boolean; reason?: string } => {
   const configured = (process.env.DIGISTORE24_WEBHOOK_SECRET || '').trim();
   if (!configured) {
-    console.warn('[digistore24/webhook] DIGISTORE24_WEBHOOK_SECRET is not set; skipping verification (dev-safe).');
+    if (process.env.NODE_ENV === 'production') {
+      return { ok: false, reason: 'secret_not_configured' };
+    }
+    console.warn('[digistore24/webhook] DIGISTORE24_WEBHOOK_SECRET is not set; skipping verification (dev-only).');
     return { ok: true };
   }
 
@@ -95,9 +98,6 @@ export async function POST(request: Request) {
   if (!email) {
     return NextResponse.json({ ok: false, error: 'missing_email' }, { status: 400 });
   }
-  if (!orderId) {
-    return NextResponse.json({ ok: false, error: 'missing_order_id' }, { status: 400 });
-  }
 
   const status = mapStatus(eventType);
 
@@ -113,30 +113,81 @@ export async function POST(request: Request) {
   const nowIso = new Date().toISOString();
 
   try {
-    const { error } = await supabase
-      .from('subscriptions')
-      .upsert(
-        {
-          email,
-          user_id: userId,
-          status,
-          digistore_order_id: orderId,
-          digistore_product_id: productId || null,
-          raw_event: payload,
-          last_event_at: nowIso,
-        },
-        { onConflict: 'email,digistore_order_id' },
-      );
+    // Upsert rules:
+    // - If orderId exists: idempotent by (lower(email), orderId) via partial unique index.
+    // - If orderId missing: best-effort upsert by lower(email) (update latest NULL-order row, else insert).
+    const baseUpdate = {
+      email,
+      user_id: userId,
+      status,
+      digistore_order_id: orderId || null,
+      digistore_product_id: productId || null,
+      raw_event: payload,
+      last_event_at: nowIso,
+    };
 
-    if (error) {
-      console.error('[digistore24/webhook] Upsert failed.', error);
-      return NextResponse.json({ ok: false, error: 'upsert_failed' }, { status: 500 });
+    if (orderId) {
+      // Try update-first
+      const existing = await supabase
+        .from('subscriptions')
+        .select('id')
+        .ilike('email', email)
+        .eq('digistore_order_id', orderId)
+        .limit(1);
+
+      const existingId =
+        Array.isArray(existing.data) && existing.data.length > 0
+          ? ((existing.data[0] as { id?: string }).id || null)
+          : null;
+
+      if (existingId) {
+        const { error } = await supabase.from('subscriptions').update(baseUpdate).eq('id', existingId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('subscriptions').insert(baseUpdate);
+        if (error) {
+          // Likely unique violation (duplicate webhook); retry as update.
+          const retry = await supabase
+            .from('subscriptions')
+            .select('id')
+            .ilike('email', email)
+            .eq('digistore_order_id', orderId)
+            .limit(1);
+          const retryId =
+            Array.isArray(retry.data) && retry.data.length > 0
+              ? ((retry.data[0] as { id?: string }).id || null)
+              : null;
+          if (!retryId) throw error;
+          const { error: updErr } = await supabase.from('subscriptions').update(baseUpdate).eq('id', retryId);
+          if (updErr) throw updErr;
+        }
+      }
+    } else {
+      // No order id: update latest null-order row for this email, else insert.
+      const existing = await supabase
+        .from('subscriptions')
+        .select('id')
+        .ilike('email', email)
+        .is('digistore_order_id', null)
+        .order('last_event_at', { ascending: false })
+        .limit(1);
+      const existingId =
+        Array.isArray(existing.data) && existing.data.length > 0
+          ? ((existing.data[0] as { id?: string }).id || null)
+          : null;
+      if (existingId) {
+        const { error } = await supabase.from('subscriptions').update(baseUpdate).eq('id', existingId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('subscriptions').insert(baseUpdate);
+        if (error) throw error;
+      }
     }
   } catch (err) {
     console.error('[digistore24/webhook] Unexpected error.', err);
     return NextResponse.json({ ok: false, error: 'unexpected_error' }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, email, orderId, status });
+  return NextResponse.json({ ok: true, email, orderId: orderId || null, status });
 }
 
