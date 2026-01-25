@@ -38,6 +38,14 @@ export default function RootLayout({
           rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;500&family=Inter:wght@400;500;600&display=swap"
         />
+        {/* Digistore24 promocode script - in head for validator compatibility */}
+        {/* eslint-disable-next-line @next/next/no-sync-scripts */}
+        <script src="https://www.digistore24-scripts.com/service/digistore.js" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `digistorePromocode({ "product_id": 663981, "adjust_domain": true });`,
+          }}
+        />
         <Script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" strategy="afterInteractive" defer />
         <Script
           id="onesignal-init"
