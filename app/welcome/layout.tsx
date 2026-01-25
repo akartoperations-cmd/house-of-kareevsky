@@ -16,7 +16,7 @@ export default function WelcomeLayout({
   window.__ds24PromoInited = true;
   function initDS24Promo() {
     if (typeof window.digistorePromocode === 'function') {
-      window.digistorePromocode({ product_id: 663680, adjust_domain: true });
+      window.digistorePromocode({ product_id: 663981, adjust_domain: true });
     }
   }
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
