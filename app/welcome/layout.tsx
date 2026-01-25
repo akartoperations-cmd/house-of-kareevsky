@@ -1,5 +1,3 @@
-import Script from 'next/script';
-
 export default function WelcomeLayout({
   children,
 }: {
@@ -7,14 +5,10 @@ export default function WelcomeLayout({
 }) {
   return (
     <>
-      {/* Digistore24 scripts - using beforeInteractive to appear in view-source */}
-      <Script
-        src="https://www.digistore24-scripts.com/service/digistore.js"
-        strategy="beforeInteractive"
-      />
-      <Script
-        id="ds24-promocode-init"
-        strategy="beforeInteractive"
+      {/* Digistore24 scripts - standard tags for validator compatibility */}
+      {/* eslint-disable-next-line @next/next/no-sync-scripts */}
+      <script src="https://www.digistore24-scripts.com/service/digistore.js" />
+      <script
         dangerouslySetInnerHTML={{
           __html: `
 (function() {
