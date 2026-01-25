@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import DigistorePromocodeScript from '@/app/components/DigistorePromocodeScript';
 import { externalPlatforms, type ExternalPlatform } from '@/app/lib/externalPlatforms';
 import { useAccessRedirect } from '@/app/lib/useAccessRedirect';
 
@@ -110,6 +111,7 @@ export default function WelcomePage() {
 
   return (
     <div className="welcome-page">
+      <DigistorePromocodeScript />
       <div className="welcome-card">
         <div className="welcome-hero">
           <div className="welcome-logo-wrap">
@@ -160,7 +162,7 @@ export default function WelcomePage() {
                     className="welcome-preview__button"
                     href={platform.href}
                     target="_blank"
-                    rel="noreferrer noopener"
+                    rel="noopener noreferrer"
                   >
                     <span className="welcome-preview__icon" aria-hidden="true">
                       {platformIcons[platform.icon]}
