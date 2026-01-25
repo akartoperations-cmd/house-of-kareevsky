@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import Script from 'next/script';
 import { useMemo, useState } from 'react';
 import { externalPlatforms, type ExternalPlatform } from '@/app/lib/externalPlatforms';
 import { useAccessRedirect } from '@/app/lib/useAccessRedirect';
@@ -111,17 +110,6 @@ export default function WelcomePage() {
 
   return (
     <div className="welcome-page">
-      <Script src="https://www.digistore24-scripts.com/service/digistore.js" strategy="afterInteractive" />
-      <Script id="ds24-promocode-init" strategy="afterInteractive">
-        {`
-if (!window.__ds24PromoInited) {
-  window.__ds24PromoInited = true;
-  if (typeof window.digistorePromocode === 'function') {
-    window.digistorePromocode({ product_id: 663680, adjust_domain: true });
-  }
-}
-        `}
-      </Script>
       <div className="welcome-card">
         <div className="welcome-hero">
           <div className="welcome-logo-wrap">
