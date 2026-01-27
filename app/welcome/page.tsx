@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { externalPlatforms, type ExternalPlatform } from '@/app/lib/externalPlatforms';
 import { useAccessRedirect } from '@/app/lib/useAccessRedirect';
 
@@ -16,8 +16,18 @@ const STORY_BLOCKS = [
   'The world of art is going through a unique evolution and I am one of the first who begins it. I do not follow corporations! I decided to create my own app and space for my art, and instead of getting 0.003 dollars per listen and somehow saving up, I decided to create my own place where I will be all me and all my art and I will be much closer than Patreon and YouTube or Spotify. Even 300 people who buy a subscription already give me the opportunity to create much more and without restrictions. And I will be able to devote all my time to art and dedicate my life to it.',
 ];
 
-const checkoutUrl = process.env.NEXT_PUBLIC_DIGISTORE24_CHECKOUT_URL || '';
-const checkoutConfigured = Boolean(checkoutUrl);
+const checkoutUrl = process.env.NEXT_PUBLIC_DIGISTORE_CHECKOUT_URL || '';
+
+const isProbablyValidUrl = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
+  }
+};
 
 const platformIcons: Record<ExternalPlatform['icon'], JSX.Element> = {
   instagram: (
@@ -50,12 +60,36 @@ export default function WelcomePage() {
   };
 
   const handleEnter = () => {
-    if (!checkoutConfigured) {
-      setStatus({ type: 'error', message: 'Checkout is not configured yet.' });
+    if (!isProbablyValidUrl(checkoutUrl)) {
+      console.log('missing NEXT_PUBLIC_DIGISTORE_CHECKOUT_URL');
+      setStatus({
+        type: 'error',
+        message: 'Payment link is not configured. Please try again later.',
+      });
       return;
     }
-    window.location.href = checkoutUrl;
+    window.open(checkoutUrl.trim(), '_blank', 'noopener,noreferrer');
   };
+
+  useEffect(() => {
+    if (access.status !== 'allowed') return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter') return;
+      if (e.isComposing) return;
+
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || (target && target.isContentEditable)) {
+        return;
+      }
+
+      handleEnter();
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [access.status]);
 
   const handleSendLink = async () => {
     const trimmed = email.trim();
