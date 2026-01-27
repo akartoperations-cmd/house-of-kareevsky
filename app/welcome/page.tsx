@@ -75,12 +75,21 @@ export default function WelcomePage() {
     if (access.status !== 'allowed') return;
 
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if (e.repeat) return;
       if (e.key !== 'Enter') return;
       if (e.isComposing) return;
 
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select' || (target && target.isContentEditable)) {
+      if (
+        tag === 'input' ||
+        tag === 'textarea' ||
+        tag === 'select' ||
+        tag === 'button' ||
+        tag === 'a' ||
+        (target && target.isContentEditable)
+      ) {
         return;
       }
 
