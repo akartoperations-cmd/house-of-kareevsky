@@ -35,61 +35,105 @@ const timingSafeEqualStr = (a: string, b: string) => {
   return crypto.timingSafeEqual(aBuf, bBuf);
 };
 
-const verifyShaSign = (
-  data: FormDataMap,
-  ipnPassphrase: string,
-): { ok: boolean; reason?: 'INVALID_SHA_SIGN' } => {
-  const provided = (data.sha_sign || '').trim();
-  if (!provided) return { ok: false, reason: 'INVALID_SHA_SIGN' };
+const computeDigistoreShaSign = (params: FormDataMap, passphrase: string): string => {
+  // PHP reference (Generic IPN):
+  // - sha512
+  // - remove sha_sign/SHASIGN
+  // - ksort (case-sensitive; convert_keys_to_uppercase=false)
+  // - skip empty values (undefined/null/""/false)
+  // - concat "$key=$value$passphrase" for each key, no separators
+  // - hex digest upper-case
+  const clean: FormDataMap = { ...params };
+  delete clean.sha_sign;
+  delete clean.SHASIGN;
 
-  // Digistore24 Variant A: sha_sign = SHA-256 hex(lowercase) of:
-  // "key=value" pairs for all fields except sha_sign, sorted by key, joined with "&"
-  // and then append "&ipn_passphrase=PASS".
-  const withoutSha: Record<string, string> = { ...data };
-  delete withoutSha.sha_sign;
+  const keys = Object.keys(clean).sort(); // JS sort is case-sensitive by default
+  let base = '';
+  for (const key of keys) {
+    const value = clean[key];
+    if (value === '' || value === undefined || value === null) continue;
+    // formData() gives strings, but keep the PHP "false" skip behavior too
+    if (value === 'false') continue;
+    base += `${key}=${value}${passphrase}`;
+  }
 
-  const keys = Object.keys(withoutSha).sort((a, b) => a.localeCompare(b));
-  const query = keys.map((k) => `${k}=${withoutSha[k] ?? ''}`).join('&');
-  const base = `${query}&ipn_passphrase=${ipnPassphrase}`;
-
-  const computed = crypto.createHash('sha256').update(base, 'utf8').digest('hex').toLowerCase();
-  const providedNorm = provided.toLowerCase();
-  if (!timingSafeEqualStr(computed, providedNorm)) return { ok: false, reason: 'INVALID_SHA_SIGN' };
-  return { ok: true };
+  return crypto.createHash('sha512').update(base, 'utf8').digest('hex').toUpperCase();
 };
 
 export async function POST(request: Request) {
-  // Digistore24 sends application/x-www-form-urlencoded most of the time.
-  // Parse as text, then URLSearchParams, then object.
-  const raw = await request.text();
-  const params = new URLSearchParams(raw);
-  const data = Object.fromEntries(params.entries()) as FormDataMap;
+  // Digistore24 sends POST form-urlencoded like PHP $_POST, not JSON.
+  const fd = await request.formData();
+  const data: FormDataMap = {};
+  fd.forEach((rawValue, key) => {
+    if (key in data) return; // keep first value, like $_POST
+    data[key] = typeof rawValue === 'string' ? rawValue : String(rawValue);
+  });
 
-  const ipnPassphrase = (process.env.DIGISTORE24_IPN_PASSWORD || '').trim();
-  const ipnPassphrasePresent = Boolean(ipnPassphrase);
-  const supabaseUrlPresent = Boolean((process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim());
-  const supabaseServiceRoleKeyPresent = Boolean((process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim());
-  const shaIncoming = (data.sha_sign || '').trim();
+  const passphrase = (process.env.DIGISTORE24_IPN_PASSWORD || '').trim();
+  const event = firstString(data, ['event', 'event_type', 'type']);
+  const apiMode = firstString(data, ['api_mode']);
+  const isConnectionTest = event === 'connection_test';
 
-  // Logs must not leak secrets.
-  console.log('[digistore24] env DIGISTORE24_IPN_PASSWORD present:', ipnPassphrasePresent);
-  console.log('[digistore24] env NEXT_PUBLIC_SUPABASE_URL present:', supabaseUrlPresent);
-  console.log('[digistore24] env SUPABASE_SERVICE_ROLE_KEY present:', supabaseServiceRoleKeyPresent);
-  console.log('[digistore24] sha_sign prefix:', shaPrefix(shaIncoming));
+  const receivedSha = firstString(data, ['sha_sign', 'SHASIGN']);
+  const expectedSha = passphrase ? computeDigistoreShaSign(data, passphrase) : '';
 
-  if (!ipnPassphrase) {
-    console.error('[digistore24] missing password');
-    return new NextResponse('DIGISTORE24_IPN_PASSWORD missing', {
-      status: 500,
+  const keys = Object.keys(data).sort();
+  let reason = 'ok';
+
+  // connection_test всегда OK, даже если подпись отключена/невалидна.
+  if (isConnectionTest) {
+    reason = 'connection_test';
+    console.log('[digistore24]', {
+      event,
+      api_mode: apiMode,
+      keys,
+      received_sha_sign: shaPrefix(receivedSha),
+      expected_sha_sign: shaPrefix(expectedSha),
+      reason,
+    });
+    return new NextResponse('OK', { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+  }
+
+  if (!passphrase) {
+    reason = 'missing_passphrase';
+    console.log('[digistore24]', {
+      event,
+      api_mode: apiMode,
+      keys,
+      received_sha_sign: shaPrefix(receivedSha),
+      expected_sha_sign: shaPrefix(expectedSha),
+      reason,
+    });
+    return new NextResponse('missing passphrase', { status: 401, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+  }
+
+  const receivedNorm = receivedSha.trim().toUpperCase();
+  const expectedNorm = expectedSha.trim().toUpperCase();
+  const ok = Boolean(receivedNorm) && timingSafeEqualStr(receivedNorm, expectedNorm);
+  if (!ok) {
+    reason = 'invalid_signature';
+    console.log('[digistore24]', {
+      event,
+      api_mode: apiMode,
+      keys,
+      received_sha_sign: shaPrefix(receivedNorm),
+      expected_sha_sign: shaPrefix(expectedNorm),
+      reason,
+    });
+    return new NextResponse('ERROR: invalid sha signature', {
+      status: 401,
       headers: { 'content-type': 'text/plain; charset=utf-8' },
     });
   }
 
-  const shaCheck = verifyShaSign(data, ipnPassphrase);
-  if (!shaCheck.ok) {
-    console.warn('[digistore24] invalid sha_sign');
-    return new NextResponse('invalid sha_sign', { status: 401, headers: { 'content-type': 'text/plain; charset=utf-8' } });
-  }
+  console.log('[digistore24]', {
+    event,
+    api_mode: apiMode,
+    keys,
+    received_sha_sign: shaPrefix(receivedNorm),
+    expected_sha_sign: shaPrefix(expectedNorm),
+    reason,
+  });
 
   const email = parseEmail(
     firstString(data, [
@@ -107,8 +151,7 @@ export async function POST(request: Request) {
   const productId = firstString(data, ['product_id', 'productId']);
   const eventType = firstString(data, ['event', 'event_type', 'type', 'status', 'payment_status', 'order_status']);
 
-  // sha_sign is valid. Per Variant A requirements: always return 200 + "OK".
-  // Process the webhook best-effort without impacting the response.
+  // Signature is valid. Process best-effort, without impacting the response body.
   try {
     if (!email) {
       return new NextResponse('OK', { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } });
