@@ -42,7 +42,7 @@ const payloadToObject = async (request: Request): Promise<IncomingPayload> => {
   return obj;
 };
 
-const validateSecret = (request: Request, payload: IncomingPayload): { ok: boolean; reason?: string } => {
+const validateSecret = (request: Request): { ok: boolean; reason?: string } => {
   const configured = (process.env.DIGISTORE24_WEBHOOK_SECRET || '').trim();
   if (!configured) {
     if (process.env.NODE_ENV === 'production') {
@@ -52,31 +52,39 @@ const validateSecret = (request: Request, payload: IncomingPayload): { ok: boole
     return { ok: true };
   }
 
-  const headerSecret = (request.headers.get('x-digistore24-webhook-secret') || '').trim();
-  const bodySecret =
-    (typeof payload.webhook_secret === 'string' && payload.webhook_secret.trim()) ||
-    (typeof payload.secret === 'string' && payload.secret.trim()) ||
-    '';
-
-  const provided = headerSecret || bodySecret;
-  if (!provided) return { ok: false, reason: 'missing_secret' };
+  const provided = (request.headers.get('x-digistore24-webhook-secret') || '').trim();
+  if (!provided) return { ok: false, reason: 'missing_secret_header' };
   if (provided !== configured) return { ok: false, reason: 'invalid_secret' };
   return { ok: true };
 };
 
 export async function POST(request: Request) {
+  const configuredSecret = (process.env.DIGISTORE24_WEBHOOK_SECRET || '').trim();
+  const incomingSecret = (request.headers.get('x-digistore24-webhook-secret') || '').trim();
+  const headerKeys = Array.from(request.headers.keys()).sort();
+  console.log('[digistore24/webhook] Incoming headers:', headerKeys);
+  console.log('[digistore24/webhook] x-digistore24-webhook-secret present:', Boolean(incomingSecret), 'len:', incomingSecret.length);
+  console.log('[digistore24/webhook] DIGISTORE24_WEBHOOK_SECRET configured:', Boolean(configuredSecret));
+
+  const payload = await payloadToObject(request);
+
+  const secretCheck = validateSecret(request);
+  if (!secretCheck.ok) {
+    console.warn('[digistore24/webhook] Secret verification failed:', secretCheck.reason);
+    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+  }
+
+  // Digistore24 "Test connection" may send an empty (or near-empty) payload. If the secret is valid,
+  // acknowledge with 200 OK (plain text).
+  const nonSecretKeys = Object.keys(payload).filter((k) => k !== 'secret' && k !== 'webhook_secret');
+  if (nonSecretKeys.length === 0) {
+    return new NextResponse('OK', { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+  }
+
   const supabase = getSupabaseServiceClient();
   if (!supabase) {
     console.error('[digistore24/webhook] SUPABASE_SERVICE_ROLE_KEY not configured.');
     return NextResponse.json({ ok: false, error: 'service_role_not_configured' }, { status: 500 });
-  }
-
-  const payload = await payloadToObject(request);
-
-  const secretCheck = validateSecret(request, payload);
-  if (!secretCheck.ok) {
-    console.warn('[digistore24/webhook] Secret verification failed:', secretCheck.reason);
-    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
   }
 
   const email = parseEmail(
