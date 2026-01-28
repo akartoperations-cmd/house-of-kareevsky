@@ -102,8 +102,8 @@ const isConnectionTest = (payload: IncomingPayload) => {
   ]);
   const orderId = firstString(payload, ['order_id', 'orderId', 'transaction_id', 'transactionId']);
   const eventType = firstString(payload, ['event', 'event_type', 'type', 'status', 'payment_status', 'order_status']);
-  const shaSign = firstString(payload, ['sha_sign']);
-  const hasAnyCoreField = Boolean(email || orderId || eventType || shaSign);
+  const productId = firstString(payload, ['product_id', 'productId']);
+  const hasAnyCoreField = Boolean(email || orderId || eventType || productId);
   return !hasAnyCoreField;
 };
 
@@ -143,17 +143,18 @@ export async function POST(request: Request) {
   const payload = await payloadToObject(request);
   logRequest(request, payload);
 
+  const ipnPasswordPresent = Boolean((process.env.DIGISTORE24_IPN_PASSWORD || '').trim());
+  const allowUnverifiedTestPresent = (process.env.DIGISTORE24_IPN_ALLOW_UNVERIFIED_TEST || '').trim().length > 0;
   const allowUnverifiedTest = (process.env.DIGISTORE24_IPN_ALLOW_UNVERIFIED_TEST || '').trim().toLowerCase() === 'true';
-  console.log('[digistore24/webhook] DIGISTORE24_IPN_ALLOW_UNVERIFIED_TEST:', allowUnverifiedTest);
-  console.log('[digistore24/webhook] DIGISTORE24_IPN_PASSWORD configured:', Boolean((process.env.DIGISTORE24_IPN_PASSWORD || '').trim()));
+  console.log('[digistore24/webhook] env DIGISTORE24_IPN_PASSWORD present:', ipnPasswordPresent);
+  console.log('[digistore24/webhook] env DIGISTORE24_IPN_ALLOW_UNVERIFIED_TEST present:', allowUnverifiedTestPresent);
+  console.log('[digistore24/webhook] DIGISTORE24_IPN_ALLOW_UNVERIFIED_TEST value:', allowUnverifiedTest);
 
-  // Digistore24 "Test connection" (generic IPN) can be empty/partial. Always acknowledge it with 200 OK.
-  // If it contains a sha_sign, we still log whether it verifies; but we don't block the test response.
-  if (isConnectionTest(payload)) {
-    const shaCheck = verifyShaSign(payload);
-    if (!shaCheck.ok && !allowUnverifiedTest) {
-      console.warn('[digistore24/webhook] Test connection sha_sign not valid (allowed anyway):', shaCheck.reason);
-    }
+  const shaSign = firstString(payload, ['sha_sign']);
+
+  // Digistore24 Generic IPN "Test connection" may come without sha_sign and/or without real order fields.
+  // Per requirements: NEVER return 401 for test connection; always 200 with body exactly "OK".
+  if (!shaSign || isConnectionTest(payload)) {
     return new NextResponse('OK', { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } });
   }
 
