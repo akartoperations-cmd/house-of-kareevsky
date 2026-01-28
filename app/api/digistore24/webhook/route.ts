@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServiceClient } from '@/app/lib/supabaseServiceClient';
+import crypto from 'crypto';
 
 export const runtime = 'nodejs';
 
@@ -42,43 +43,115 @@ const payloadToObject = async (request: Request): Promise<IncomingPayload> => {
   return obj;
 };
 
-const validateSecret = (request: Request): { ok: boolean; reason?: string } => {
-  const configured = (process.env.DIGISTORE24_WEBHOOK_SECRET || '').trim();
-  if (!configured) {
-    if (process.env.NODE_ENV === 'production') {
-      return { ok: false, reason: 'secret_not_configured' };
-    }
-    console.warn('[digistore24/webhook] DIGISTORE24_WEBHOOK_SECRET is not set; skipping verification (dev-only).');
-    return { ok: true };
+const maskValue = (value: unknown): unknown => {
+  if (typeof value !== 'string') return value;
+  const v = value.trim();
+  if (!v) return v;
+  if (v.length <= 8) return `${v.slice(0, 2)}***`;
+  return `${v.slice(0, 4)}***${v.slice(-3)}`;
+};
+
+const shouldMaskKey = (key: string) => {
+  const k = key.toLowerCase();
+  return (
+    k.includes('secret') ||
+    k.includes('password') ||
+    k.includes('token') ||
+    k.includes('key') ||
+    k.includes('authorization') ||
+    k.includes('signature') ||
+    k.includes('sha_sign') ||
+    k.includes('sign')
+  );
+};
+
+const logRequest = (request: Request, payload: IncomingPayload) => {
+  const headerObj: Record<string, unknown> = {};
+  for (const [k, v] of request.headers.entries()) {
+    headerObj[k] = shouldMaskKey(k) ? maskValue(v) : v;
   }
 
-  const provided = (request.headers.get('x-digistore24-webhook-secret') || '').trim();
-  if (!provided) return { ok: false, reason: 'missing_secret_header' };
-  if (provided !== configured) return { ok: false, reason: 'invalid_secret' };
+  const bodyObj: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(payload)) {
+    bodyObj[k] = shouldMaskKey(k) ? maskValue(v) : v;
+  }
+
+  console.log('[digistore24/webhook] Incoming headers:', headerObj);
+  console.log('[digistore24/webhook] Incoming body keys:', Object.keys(payload).sort());
+  console.log('[digistore24/webhook] Incoming body (masked):', bodyObj);
+};
+
+const isConnectionTest = (payload: IncomingPayload) => {
+  const email = firstString(payload, [
+    'email',
+    'customer_email',
+    'buyer_email',
+    'billing_email',
+    'payer_email',
+    'consumer_email',
+    'user_email',
+  ]);
+  const orderId = firstString(payload, ['order_id', 'orderId', 'transaction_id', 'transactionId']);
+  const eventType = firstString(payload, ['event', 'event_type', 'type', 'status', 'payment_status', 'order_status']);
+  const shaSign = firstString(payload, ['sha_sign']);
+  const hasAnyCoreField = Boolean(email || orderId || eventType || shaSign);
+  return !hasAnyCoreField;
+};
+
+const timingSafeEqualStr = (a: string, b: string) => {
+  const aBuf = Buffer.from(a);
+  const bBuf = Buffer.from(b);
+  if (aBuf.length !== bBuf.length) return false;
+  return crypto.timingSafeEqual(aBuf, bBuf);
+};
+
+const verifyShaSign = (payload: IncomingPayload): { ok: boolean; reason?: string } => {
+  const ipnPassword = (process.env.DIGISTORE24_IPN_PASSWORD || '').trim();
+  if (!ipnPassword) return { ok: false, reason: 'ipn_password_not_configured' };
+
+  const provided = firstString(payload, ['sha_sign']).toLowerCase();
+  if (!provided) return { ok: false, reason: 'missing_sha_sign' };
+
+  // Generic IPN signature (sha_sign): concatenate values of all params (except sha_sign) sorted by key, append IPN password.
+  const keys = Object.keys(payload)
+    .filter((k) => k !== 'sha_sign')
+    .sort((a, b) => a.localeCompare(b));
+
+  let base = '';
+  for (const k of keys) {
+    const v = payload[k];
+    if (v === null || typeof v === 'undefined') continue;
+    base += String(v);
+  }
+  base += ipnPassword;
+
+  const computed = crypto.createHash('sha512').update(base, 'utf8').digest('hex').toLowerCase();
+  if (!timingSafeEqualStr(computed, provided)) return { ok: false, reason: 'invalid_sha_sign' };
   return { ok: true };
 };
 
 export async function POST(request: Request) {
-  const configuredSecret = (process.env.DIGISTORE24_WEBHOOK_SECRET || '').trim();
-  const incomingSecret = (request.headers.get('x-digistore24-webhook-secret') || '').trim();
-  const headerKeys = Array.from(request.headers.keys()).sort();
-  console.log('[digistore24/webhook] Incoming headers:', headerKeys);
-  console.log('[digistore24/webhook] x-digistore24-webhook-secret present:', Boolean(incomingSecret), 'len:', incomingSecret.length);
-  console.log('[digistore24/webhook] DIGISTORE24_WEBHOOK_SECRET configured:', Boolean(configuredSecret));
-
   const payload = await payloadToObject(request);
+  logRequest(request, payload);
 
-  const secretCheck = validateSecret(request);
-  if (!secretCheck.ok) {
-    console.warn('[digistore24/webhook] Secret verification failed:', secretCheck.reason);
-    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+  const allowUnverifiedTest = (process.env.DIGISTORE24_IPN_ALLOW_UNVERIFIED_TEST || '').trim().toLowerCase() === 'true';
+  console.log('[digistore24/webhook] DIGISTORE24_IPN_ALLOW_UNVERIFIED_TEST:', allowUnverifiedTest);
+  console.log('[digistore24/webhook] DIGISTORE24_IPN_PASSWORD configured:', Boolean((process.env.DIGISTORE24_IPN_PASSWORD || '').trim()));
+
+  // Digistore24 "Test connection" (generic IPN) can be empty/partial. Always acknowledge it with 200 OK.
+  // If it contains a sha_sign, we still log whether it verifies; but we don't block the test response.
+  if (isConnectionTest(payload)) {
+    const shaCheck = verifyShaSign(payload);
+    if (!shaCheck.ok && !allowUnverifiedTest) {
+      console.warn('[digistore24/webhook] Test connection sha_sign not valid (allowed anyway):', shaCheck.reason);
+    }
+    return new NextResponse('OK', { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } });
   }
 
-  // Digistore24 "Test connection" may send an empty (or near-empty) payload. If the secret is valid,
-  // acknowledge with 200 OK (plain text).
-  const nonSecretKeys = Object.keys(payload).filter((k) => k !== 'secret' && k !== 'webhook_secret');
-  if (nonSecretKeys.length === 0) {
-    return new NextResponse('OK', { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+  const shaCheck = verifyShaSign(payload);
+  if (!shaCheck.ok) {
+    console.warn('[digistore24/webhook] sha_sign verification failed:', shaCheck.reason);
+    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
   }
 
   const supabase = getSupabaseServiceClient();
