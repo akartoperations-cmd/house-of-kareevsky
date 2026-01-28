@@ -43,54 +43,21 @@ const payloadToObject = async (request: Request): Promise<IncomingPayload> => {
   return obj;
 };
 
-const maskValue = (value: unknown): unknown => {
-  if (typeof value !== 'string') return value;
-  const v = value.trim();
-  if (!v) return v;
-  // Show only a small prefix to avoid leaking secrets in logs.
-  if (v.length <= 6) return `${v.slice(0, Math.min(4, v.length))}…`;
-  return `${v.slice(0, 6)}…`;
+const maskShaSign = (value: string): string => {
+  if (!value) return '(empty)';
+  if (value.length <= 6) return value.slice(0, 4) + '...';
+  return value.slice(0, 6) + '...';
 };
 
-const shouldMaskKey = (key: string) => {
-  const k = key.toLowerCase().trim();
-  if (
-    k === 'authorization' ||
-    k === 'cookie' ||
-    k === 'x-digistore24-webhook-secret' ||
-    k === 'digistore24-webhook-secret'
-  ) {
-    return true;
-  }
-  return (
-    k.includes('secret') ||
-    k.includes('password') ||
-    k.includes('token') ||
-    k.includes('key') ||
-    k.includes('authorization') ||
-    k.includes('signature') ||
-    k.includes('sha_sign') ||
-    k.includes('sign')
-  );
-};
+const isTestRequest = (payload: IncomingPayload): boolean => {
+  // Empty payload = test
+  if (Object.keys(payload).length === 0) return true;
 
-const logRequest = (request: Request, payload: IncomingPayload) => {
-  const headerObj: Record<string, unknown> = {};
-  request.headers.forEach((value, key) => {
-    headerObj[key] = shouldMaskKey(key) ? maskValue(value) : value;
-  });
+  // No sha_sign = likely test
+  const shaSign = firstString(payload, ['sha_sign']);
+  if (!shaSign) return true;
 
-  const bodyObj: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(payload)) {
-    bodyObj[k] = shouldMaskKey(k) ? maskValue(v) : v;
-  }
-
-  console.log('[digistore24/webhook] Incoming headers:', headerObj);
-  console.log('[digistore24/webhook] Incoming body keys:', Object.keys(payload).sort());
-  console.log('[digistore24/webhook] Incoming body (masked):', bodyObj);
-};
-
-const isConnectionTest = (payload: IncomingPayload) => {
+  // No core business fields = connection test
   const email = firstString(payload, [
     'email',
     'customer_email',
@@ -103,6 +70,7 @@ const isConnectionTest = (payload: IncomingPayload) => {
   const orderId = firstString(payload, ['order_id', 'orderId', 'transaction_id', 'transactionId']);
   const eventType = firstString(payload, ['event', 'event_type', 'type', 'status', 'payment_status', 'order_status']);
   const productId = firstString(payload, ['product_id', 'productId']);
+
   const hasAnyCoreField = Boolean(email || orderId || eventType || productId);
   return !hasAnyCoreField;
 };
@@ -114,12 +82,9 @@ const timingSafeEqualStr = (a: string, b: string) => {
   return crypto.timingSafeEqual(aBuf, bBuf);
 };
 
-const verifyShaSign = (payload: IncomingPayload): { ok: boolean; reason?: string } => {
-  const ipnPassword = (process.env.DIGISTORE24_IPN_PASSWORD || '').trim();
-  if (!ipnPassword) return { ok: false, reason: 'ipn_password_not_configured' };
-
+const verifyShaSign = (payload: IncomingPayload, ipnPassword: string): { ok: boolean; reason?: string } => {
   const provided = firstString(payload, ['sha_sign']).toLowerCase();
-  if (!provided) return { ok: false, reason: 'missing_sha_sign' };
+  if (!provided) return { ok: false, reason: 'MISSING_SHA_SIGN' };
 
   // Generic IPN signature (sha_sign): concatenate values of all params (except sha_sign) sorted by key, append IPN password.
   const keys = Object.keys(payload)
@@ -135,39 +100,62 @@ const verifyShaSign = (payload: IncomingPayload): { ok: boolean; reason?: string
   base += ipnPassword;
 
   const computed = crypto.createHash('sha512').update(base, 'utf8').digest('hex').toLowerCase();
-  if (!timingSafeEqualStr(computed, provided)) return { ok: false, reason: 'invalid_sha_sign' };
+  if (!timingSafeEqualStr(computed, provided)) return { ok: false, reason: 'INVALID_SHA_SIGN' };
   return { ok: true };
 };
 
 export async function POST(request: Request) {
+  const contentType = request.headers.get('content-type') || '';
+  const method = request.method;
+
+  // Parse payload
   const payload = await payloadToObject(request);
-  logRequest(request, payload);
 
+  // Safe logging
   const ipnPasswordPresent = Boolean((process.env.DIGISTORE24_IPN_PASSWORD || '').trim());
-  const allowUnverifiedTestPresent = (process.env.DIGISTORE24_IPN_ALLOW_UNVERIFIED_TEST || '').trim().length > 0;
   const allowUnverifiedTest = (process.env.DIGISTORE24_IPN_ALLOW_UNVERIFIED_TEST || '').trim().toLowerCase() === 'true';
-  console.log('[digistore24/webhook] env DIGISTORE24_IPN_PASSWORD present:', ipnPasswordPresent);
-  console.log('[digistore24/webhook] env DIGISTORE24_IPN_ALLOW_UNVERIFIED_TEST present:', allowUnverifiedTestPresent);
-  console.log('[digistore24/webhook] DIGISTORE24_IPN_ALLOW_UNVERIFIED_TEST value:', allowUnverifiedTest);
-
   const shaSign = firstString(payload, ['sha_sign']);
+  const bodyKeys = Object.keys(payload).sort();
 
-  // Digistore24 Generic IPN "Test connection" may come without sha_sign and/or without real order fields.
-  // Per requirements: NEVER return 401 for test connection; always 200 with body exactly "OK".
-  if (!shaSign || isConnectionTest(payload)) {
+  console.log('[digistore24] --- Incoming Request ---');
+  console.log('[digistore24] method:', method);
+  console.log('[digistore24] content-type:', contentType);
+  console.log('[digistore24] DIGISTORE24_IPN_PASSWORD present:', ipnPasswordPresent);
+  console.log('[digistore24] DIGISTORE24_IPN_ALLOW_UNVERIFIED_TEST:', allowUnverifiedTest);
+  console.log('[digistore24] body keys:', bodyKeys);
+  console.log('[digistore24] sha_sign:', maskShaSign(shaSign));
+
+  // Check if this is a test request
+  const testRequest = isTestRequest(payload);
+  console.log('[digistore24] isTestRequest:', testRequest);
+
+  // TEST BYPASS: If allowed and this looks like a test, return OK immediately
+  if (allowUnverifiedTest && testRequest) {
+    console.log('[digistore24] TEST_BYPASS_USED');
     return new NextResponse('OK', { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } });
   }
 
-  const shaCheck = verifyShaSign(payload);
-  if (!shaCheck.ok) {
-    console.warn('[digistore24/webhook] sha_sign verification failed:', shaCheck.reason);
-    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+  // Check IPN password is configured
+  const ipnPassword = (process.env.DIGISTORE24_IPN_PASSWORD || '').trim();
+  if (!ipnPassword) {
+    console.error('[digistore24] IPN_PASSWORD_MISSING - env DIGISTORE24_IPN_PASSWORD not configured');
+    return new NextResponse('IPN_PASSWORD_MISSING', { status: 500, headers: { 'content-type': 'text/plain; charset=utf-8' } });
   }
 
+  // Verify sha_sign
+  const shaCheck = verifyShaSign(payload, ipnPassword);
+  if (!shaCheck.ok) {
+    console.warn('[digistore24] sha_sign verification failed:', shaCheck.reason);
+    return new NextResponse(shaCheck.reason || 'INVALID_SHA_SIGN', { status: 401, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+  }
+
+  console.log('[digistore24] sha_sign verification: OK');
+
+  // From here: sha_sign is valid, process the webhook
   const supabase = getSupabaseServiceClient();
   if (!supabase) {
-    console.error('[digistore24/webhook] SUPABASE_SERVICE_ROLE_KEY not configured.');
-    return NextResponse.json({ ok: false, error: 'service_role_not_configured' }, { status: 500 });
+    console.error('[digistore24] SUPABASE_SERVICE_ROLE_KEY not configured.');
+    return new NextResponse('SERVICE_ROLE_NOT_CONFIGURED', { status: 500, headers: { 'content-type': 'text/plain; charset=utf-8' } });
   }
 
   const email = parseEmail(
@@ -187,10 +175,12 @@ export async function POST(request: Request) {
   const eventType = firstString(payload, ['event', 'event_type', 'type', 'status', 'payment_status', 'order_status']);
 
   if (!email) {
-    return NextResponse.json({ ok: false, error: 'missing_email' }, { status: 400 });
+    console.warn('[digistore24] missing email in payload');
+    return new NextResponse('MISSING_EMAIL', { status: 400, headers: { 'content-type': 'text/plain; charset=utf-8' } });
   }
 
   const status = mapStatus(eventType);
+  console.log('[digistore24] Processing order - email:', email, 'orderId:', orderId || '(none)', 'status:', status);
 
   // Bind user_id if the user already exists in auth.users.
   let userId: string | null = null;
@@ -198,15 +188,12 @@ export async function POST(request: Request) {
     const { data } = await supabase.schema('auth').from('users').select('id').eq('email', email).limit(1);
     userId = (Array.isArray(data) && data.length > 0 ? (data[0] as { id?: string }).id : null) || null;
   } catch (err) {
-    console.warn('[digistore24/webhook] Failed to look up auth.users by email (continuing).', err);
+    console.warn('[digistore24] Failed to look up auth.users by email (continuing).', err);
   }
 
   const nowIso = new Date().toISOString();
 
   try {
-    // Upsert rules:
-    // - If orderId exists: idempotent by (lower(email), orderId) via partial unique index.
-    // - If orderId missing: best-effort upsert by lower(email) (update latest NULL-order row, else insert).
     const baseUpdate = {
       email,
       user_id: userId,
@@ -218,7 +205,6 @@ export async function POST(request: Request) {
     };
 
     if (orderId) {
-      // Try update-first
       const existing = await supabase
         .from('subscriptions')
         .select('id')
@@ -237,7 +223,6 @@ export async function POST(request: Request) {
       } else {
         const { error } = await supabase.from('subscriptions').insert(baseUpdate);
         if (error) {
-          // Likely unique violation (duplicate webhook); retry as update.
           const retry = await supabase
             .from('subscriptions')
             .select('id')
@@ -254,7 +239,6 @@ export async function POST(request: Request) {
         }
       }
     } else {
-      // No order id: update latest null-order row for this email, else insert.
       const existing = await supabase
         .from('subscriptions')
         .select('id')
@@ -275,10 +259,10 @@ export async function POST(request: Request) {
       }
     }
   } catch (err) {
-    console.error('[digistore24/webhook] Unexpected error.', err);
-    return NextResponse.json({ ok: false, error: 'unexpected_error' }, { status: 500 });
+    console.error('[digistore24] Unexpected DB error.', err);
+    return new NextResponse('UNEXPECTED_ERROR', { status: 500, headers: { 'content-type': 'text/plain; charset=utf-8' } });
   }
 
-  return NextResponse.json({ ok: true, email, orderId: orderId || null, status });
+  console.log('[digistore24] Webhook processed successfully');
+  return new NextResponse('OK', { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } });
 }
-
