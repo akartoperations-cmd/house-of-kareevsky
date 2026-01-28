@@ -47,12 +47,21 @@ const maskValue = (value: unknown): unknown => {
   if (typeof value !== 'string') return value;
   const v = value.trim();
   if (!v) return v;
-  if (v.length <= 8) return `${v.slice(0, 2)}***`;
-  return `${v.slice(0, 4)}***${v.slice(-3)}`;
+  // Show only a small prefix to avoid leaking secrets in logs.
+  if (v.length <= 6) return `${v.slice(0, Math.min(4, v.length))}…`;
+  return `${v.slice(0, 6)}…`;
 };
 
 const shouldMaskKey = (key: string) => {
-  const k = key.toLowerCase();
+  const k = key.toLowerCase().trim();
+  if (
+    k === 'authorization' ||
+    k === 'cookie' ||
+    k === 'x-digistore24-webhook-secret' ||
+    k === 'digistore24-webhook-secret'
+  ) {
+    return true;
+  }
   return (
     k.includes('secret') ||
     k.includes('password') ||
@@ -67,9 +76,9 @@ const shouldMaskKey = (key: string) => {
 
 const logRequest = (request: Request, payload: IncomingPayload) => {
   const headerObj: Record<string, unknown> = {};
-  for (const [k, v] of request.headers.entries()) {
-    headerObj[k] = shouldMaskKey(k) ? maskValue(v) : v;
-  }
+  request.headers.forEach((value, key) => {
+    headerObj[key] = shouldMaskKey(key) ? maskValue(value) : value;
+  });
 
   const bodyObj: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(payload)) {
