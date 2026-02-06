@@ -4,19 +4,103 @@ export default function TermsPage() {
       <div className="welcome-card">
         <div className="welcome-hero welcome-hero--simple">
           <div className="welcome-tagline">Documents</div>
-          <h1 className="welcome-doc-title">Terms</h1>
+          <h1 className="welcome-doc-title">TERMS &amp; CONDITIONS</h1>
+          <p style={{ fontSize: '14px', color: '#888', marginTop: '8px' }}>
+            (User Agreement / Public Offer)
+          </p>
+          <p style={{ fontSize: '14px', color: '#888', marginTop: '4px' }}>
+            Last updated: February 6, 2026
+          </p>
         </div>
 
-        <div className="welcome-block">
-          <p>
-            These Terms are a simple placeholder for now. This private atelier is invite-only and
-            access is granted personally. Please be kind, keep conversations warm, and do not share
-            access links or content outside the app. All works remain the property of Kareevsky and
-            are shared here for personal enjoyment and connection.
+        <div className="welcome-block" style={{ maxWidth: '800px', margin: '0 auto' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: '600', marginTop: '24px', marginBottom: '12px' }}>
+            1. GENERAL PROVISIONS
+          </h2>
+          <p style={{ marginBottom: '12px' }}>
+            1.1. This User Agreement ("Agreement") governs the relationship between the provider of the digital platform "House of Kareevsky", Adilet Imankariev (hereinafter – the "Owner"), and the user (hereinafter – the "User").
           </p>
-          <p style={{ marginTop: '12px' }}>
-            A detailed Terms version will be added soon. If you have questions, reach out through
-            the in-app messages after you enter.
+          <p style={{ marginBottom: '12px' }}>
+            1.2. The Platform provides subscription-based access to digital content, including original literary and musical works, cover versions, and AI-assisted content.
+          </p>
+          <p style={{ marginBottom: '12px' }}>
+            1.3. By accessing the Platform or completing a purchase, the User confirms full and unconditional acceptance of this Agreement.
+          </p>
+
+          <h2 style={{ fontSize: '18px', fontWeight: '600', marginTop: '24px', marginBottom: '12px' }}>
+            2. CONTRACTUAL PARTNERS
+          </h2>
+          <p style={{ marginBottom: '12px' }}>
+            2.1. The User acknowledges that for all paid transactions, Digistore24 GmbH (St.-Godehard-Straße 32, 31139 Hildesheim, Germany) acts as the Merchant of Record.
+          </p>
+          <p style={{ marginBottom: '12px' }}>
+            2.2. The financial contract for the subscription is concluded between the User and Digistore24. The Owner remains responsible for the delivery and quality of the Content.
+          </p>
+
+          <h2 style={{ fontSize: '18px', fontWeight: '600', marginTop: '24px', marginBottom: '12px' }}>
+            3. RIGHT OF WITHDRAWAL &amp; REFUNDS
+          </h2>
+          <p style={{ marginBottom: '12px' }}>
+            3.1. By purchasing a subscription and gaining immediate access to digital content, the User expressly consents to the immediate performance of the contract and acknowledges that the statutory right of withdrawal may expire once the digital content has been accessed (streamed or viewed), in accordance with applicable EU consumer protection laws.
+          </p>
+          <p style={{ marginBottom: '12px' }}>
+            3.2. Refunds, cancellations, and chargebacks are handled strictly in accordance with Digistore24's official refund policy and mandatory consumer protection regulations.
+          </p>
+
+          <h2 style={{ fontSize: '18px', fontWeight: '600', marginTop: '24px', marginBottom: '12px' }}>
+            4. INTELLECTUAL PROPERTY
+          </h2>
+          <p style={{ marginBottom: '12px' }}>
+            4.1. All original literary and musical works published on the Platform are the exclusive intellectual property of the Owner.
+          </p>
+          <p style={{ marginBottom: '12px' }}>
+            4.2. Cover versions are provided for listening purposes only. The Owner ensures that such content is distributed in compliance with standard digital licensing practices.
+          </p>
+          <p style={{ marginBottom: '12px' }}>
+            4.3. The User is granted a non-exclusive, non-transferable license for personal, non-commercial use only. Any reproduction, redistribution, recording, downloading, resale, public performance, or use of the Content for training artificial intelligence systems is strictly prohibited.
+          </p>
+
+          <h2 style={{ fontSize: '18px', fontWeight: '600', marginTop: '24px', marginBottom: '12px' }}>
+            5. SUBSCRIPTION AND PAYMENTS
+          </h2>
+          <p style={{ marginBottom: '12px' }}>
+            5.1. Access to the Platform is provided on a recurring subscription basis.
+          </p>
+          <p style={{ marginBottom: '12px' }}>
+            5.2. All payments, billing cycles, cancellations, and subscription management are handled via the Digistore24 platform.
+          </p>
+          <p style={{ marginBottom: '12px' }}>
+            5.3. Failure to complete or maintain payment may result in suspension or termination of access.
+          </p>
+
+          <h2 style={{ fontSize: '18px', fontWeight: '600', marginTop: '24px', marginBottom: '12px' }}>
+            6. LIMITATION OF LIABILITY
+          </h2>
+          <p style={{ marginBottom: '12px' }}>
+            6.1. The Platform and Content are provided on an "as is" and "as available" basis.
+          </p>
+          <p style={{ marginBottom: '12px' }}>
+            6.2. The Owner shall not be liable for temporary service interruptions caused by technical issues, hosting providers, or third-party services.
+          </p>
+
+          <h2 style={{ fontSize: '18px', fontWeight: '600', marginTop: '24px', marginBottom: '12px' }}>
+            7. GOVERNING LAW
+          </h2>
+          <p style={{ marginBottom: '12px' }}>
+            7.1. This Agreement shall be governed by the laws of the Kyrgyz Republic, subject to mandatory consumer protection laws applicable in the User's country of residence.
+          </p>
+
+          <h2 style={{ fontSize: '18px', fontWeight: '600', marginTop: '24px', marginBottom: '12px' }}>
+            8. CONTACT INFORMATION
+          </h2>
+          <p style={{ marginBottom: '4px' }}>
+            <strong>Owner:</strong> Adilet Imankariev
+          </p>
+          <p style={{ marginBottom: '4px' }}>
+            <strong>Address:</strong> Kyrgyz Republic, Bishkek, Vlasova Street 24A
+          </p>
+          <p style={{ marginBottom: '12px' }}>
+            <strong>Email:</strong> <a href="mailto:a.k.artoperations@gmail.com" style={{ color: '#666', textDecoration: 'underline' }}>a.k.artoperations@gmail.com</a>
           </p>
         </div>
       </div>
