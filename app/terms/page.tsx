@@ -44,7 +44,7 @@ export default function TermsPage() {
             3.1. By purchasing a subscription and gaining immediate access to digital content, the User expressly consents to the immediate performance of the contract and acknowledges that the statutory right of withdrawal may expire once the digital content has been accessed (streamed or viewed), in accordance with applicable EU consumer protection laws.
           </p>
           <p style={{ marginBottom: '12px' }}>
-            3.2. Refunds, cancellations, and chargebacks are handled strictly in accordance with Digistore24's official refund policy and mandatory consumer protection regulations.
+            3.2. Refunds, cancellations, and chargebacks are handled strictly in accordance with Digistore24&apos;s official refund policy and mandatory consumer protection regulations.
           </p>
 
           <h2 style={{ fontSize: '18px', fontWeight: '600', marginTop: '24px', marginBottom: '12px' }}>
@@ -87,7 +87,7 @@ export default function TermsPage() {
             7. GOVERNING LAW
           </h2>
           <p style={{ marginBottom: '12px' }}>
-            7.1. This Agreement shall be governed by the laws of the Kyrgyz Republic, subject to mandatory consumer protection laws applicable in the User's country of residence.
+            7.1. This Agreement shall be governed by the laws of the Kyrgyz Republic, subject to mandatory consumer protection laws applicable in the User&apos;s country of residence.
           </p>
 
           <h2 style={{ fontSize: '18px', fontWeight: '600', marginTop: '24px', marginBottom: '12px' }}>
