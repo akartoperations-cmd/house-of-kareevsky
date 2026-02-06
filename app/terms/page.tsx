@@ -18,7 +18,7 @@ export default function TermsPage() {
             1. GENERAL PROVISIONS
           </h2>
           <p style={{ marginBottom: '12px' }}>
-            1.1. This User Agreement ("Agreement") governs the relationship between the provider of the digital platform "House of Kareevsky", Adilet Imankariev (hereinafter – the "Owner"), and the user (hereinafter – the "User").
+            1.1. This User Agreement (&quot;Agreement&quot;) governs the relationship between the provider of the digital platform &quot;House of Kareevsky&quot;, Adilet Imankariev (hereinafter – the &quot;Owner&quot;), and the user (hereinafter – the &quot;User&quot;).
           </p>
           <p style={{ marginBottom: '12px' }}>
             1.2. The Platform provides subscription-based access to digital content, including original literary and musical works, cover versions, and AI-assisted content.
@@ -77,7 +77,7 @@ export default function TermsPage() {
             6. LIMITATION OF LIABILITY
           </h2>
           <p style={{ marginBottom: '12px' }}>
-            6.1. The Platform and Content are provided on an "as is" and "as available" basis.
+            6.1. The Platform and Content are provided on an &quot;as is&quot; and &quot;as available&quot; basis.
           </p>
           <p style={{ marginBottom: '12px' }}>
             6.2. The Owner shall not be liable for temporary service interruptions caused by technical issues, hosting providers, or third-party services.
