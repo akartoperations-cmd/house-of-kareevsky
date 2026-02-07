@@ -57,13 +57,13 @@ export default function TermsPage() {
           </p>
 
           <h2 style={{ fontSize: '18px', fontWeight: '600', marginTop: '24px', marginBottom: '12px' }}>
-            2. CONTRACTUAL PARTNERS
+            CONTRACTUAL PARTNERS (Merchant of Record)
           </h2>
           <p style={{ marginBottom: '12px' }}>
-            2.1. The User acknowledges that for all paid transactions, Digistore24 GmbH (St.-Godehard-Straße 32, 31139 Hildesheim, Germany) acts as the Merchant of Record.
+            2.1. For all paid transactions, Digistore24 GmbH (Germany) acts as the Merchant of Record and contractual partner for payment processing and invoicing.
           </p>
           <p style={{ marginBottom: '12px' }}>
-            2.2. The financial contract for the subscription is concluded between the User and Digistore24. The Owner remains responsible for the delivery and quality of the Content.
+            2.2. The financial contract for the subscription is concluded between the User and Digistore24. The Owner remains responsible for providing access to the Platform and delivering the Content.
           </p>
 
           <h2 style={{ fontSize: '18px', fontWeight: '600', marginTop: '24px', marginBottom: '12px' }}>

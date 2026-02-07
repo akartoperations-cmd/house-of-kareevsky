@@ -17,7 +17,8 @@ Kyrgyzstan
 Contact:
 Email: a.k.artoperations@gmail.com
 
-Business Registration:
+Business Registration & Tax Information:
+Tax ID (INN): 20112199301894
 Registration Number: 004-2025-169-411
 
 Merchant of Record:
