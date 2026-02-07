@@ -158,6 +158,10 @@ export default function ThankYouPage() {
             <Link href="/privacy" className="welcome-link">
               Privacy
             </Link>
+            <span className="welcome-footer__divider" />
+            <Link href="/legal-notice" className="welcome-link">
+              Legal Notice
+            </Link>
           </div>
         </div>
       </div>
