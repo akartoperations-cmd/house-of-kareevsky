@@ -1,19 +1,48 @@
 export default function TermsPage() {
   return (
     <div className="welcome-page">
-      <div className="welcome-card">
+      <div className="welcome-card" style={{ maxWidth: '920px' }}>
         <div className="welcome-hero welcome-hero--simple">
-          <div className="welcome-tagline">Documents</div>
-          <h1 className="welcome-doc-title">TERMS &amp; CONDITIONS</h1>
-          <p style={{ fontSize: '14px', color: '#888', marginTop: '8px' }}>
+          <div
+            style={{
+              fontFamily: 'var(--font-ui)',
+              fontSize: '12px',
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              color: '#666',
+            }}
+          >
+            Documents
+          </div>
+          <h1
+            style={{
+              fontFamily: 'var(--font-ui)',
+              fontSize: '28px',
+              fontWeight: 700,
+              letterSpacing: '-0.02em',
+              color: 'var(--text-dark)',
+            }}
+          >
+            TERMS &amp; CONDITIONS
+          </h1>
+          <p style={{ fontFamily: 'var(--font-ui)', fontSize: '14px', color: '#666', marginTop: '8px' }}>
             (User Agreement / Public Offer)
           </p>
-          <p style={{ fontSize: '14px', color: '#888', marginTop: '4px' }}>
+          <p style={{ fontFamily: 'var(--font-ui)', fontSize: '14px', color: '#666', marginTop: '4px' }}>
             Last updated: February 6, 2026
           </p>
         </div>
 
-        <div className="welcome-block" style={{ maxWidth: '800px', margin: '0 auto' }}>
+        <div
+          className="welcome-block"
+          style={{
+            maxWidth: '860px',
+            margin: '0 auto',
+            fontFamily: 'var(--font-ui)',
+            fontSize: '15px',
+            lineHeight: 1.7,
+          }}
+        >
           <h2 style={{ fontSize: '18px', fontWeight: '600', marginTop: '24px', marginBottom: '12px' }}>
             1. GENERAL PROVISIONS
           </h2>
@@ -97,7 +126,7 @@ export default function TermsPage() {
             <strong>Owner:</strong> Adilet Imankariev
           </p>
           <p style={{ marginBottom: '4px' }}>
-            <strong>Address:</strong> Kyrgyz Republic, Bishkek, Vlasova Street 24A
+            <strong>Address:</strong> Vlasova 24a, 720000 Bishkek, Kyrgyzstan
           </p>
           <p style={{ marginBottom: '12px' }}>
             <strong>Email:</strong> <a href="mailto:a.k.artoperations@gmail.com" style={{ color: '#666', textDecoration: 'underline' }}>a.k.artoperations@gmail.com</a>
