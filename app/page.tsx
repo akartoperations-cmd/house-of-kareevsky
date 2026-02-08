@@ -1057,6 +1057,19 @@ export default function HomePage() {
   const [newPhotoDayDates, setNewPhotoDayDates] = useState<string[]>([]);
   const [newPhotoDayTimes, setNewPhotoDayTimes] = useState<string[]>([]);
   const [feedMessages, setFeedMessages] = useState<Message[]>([]);
+  const FEED_PAGE_SIZE = 7;
+  const FEED_AUTO_PAGE_LIMIT = 3;
+  const [feedHasMoreOlder, setFeedHasMoreOlder] = useState(true);
+  const [feedShowLoadMore, setFeedShowLoadMore] = useState(false);
+  const [feedLoadingMore, setFeedLoadingMore] = useState(false);
+  const feedPagesLoadedRef = useRef(0);
+  const feedAutoPagesLoadedRef = useRef(0);
+  const feedHasMoreOlderRef = useRef(true);
+  const feedLoadedCursorsRef = useRef<Set<string>>(new Set());
+  const feedLoadingMoreRef = useRef(false);
+  const feedOldestCursorRef = useRef<string | null>(null);
+  const feedPaginationRafRef = useRef<number | null>(null);
+  const feedLastAutoLoadAtRef = useRef(0);
   const [postsSource, setPostsSource] = useState<'supabase' | 'mock' | 'uninitialized'>('uninitialized');
   const [loadingPosts, setLoadingPosts] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
@@ -1435,6 +1448,36 @@ export default function HomePage() {
     });
   }, [BOTTOM_EPSILON_PX, getScrollTarget]);
 
+  const scheduleFeedPaginationCheck = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (feedPaginationRafRef.current !== null) return;
+
+    feedPaginationRafRef.current = window.requestAnimationFrame(() => {
+      feedPaginationRafRef.current = null;
+      if (activeView !== 'home') return;
+      if (postsSource !== 'supabase') return;
+      if (!feedHasMoreOlderRef.current) return;
+
+      const target = getScrollTarget();
+      if (!target) return;
+      const scrollTop = target.scrollTop;
+      const nearTop = scrollTop <= 120;
+      if (!nearTop) return;
+
+      // Only auto-load up to 3 pages. After that, show the button.
+      if (feedPagesLoadedRef.current >= FEED_AUTO_PAGE_LIMIT) {
+        setFeedShowLoadMore(true);
+        return;
+      }
+
+      const now = Date.now();
+      if (now - feedLastAutoLoadAtRef.current < 1200) return;
+      feedLastAutoLoadAtRef.current = now;
+
+      void loadMoreFeedPosts('auto');
+    });
+  }, [FEED_AUTO_PAGE_LIMIT, activeView, getScrollTarget, loadMoreFeedPosts, postsSource]);
+
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto') => {
       const target = getScrollTarget();
@@ -1478,6 +1521,10 @@ export default function HomePage() {
   useEffect(() => {
     photoOfDayHasMoreOlderRef.current = photoOfDayHasMoreOlder;
   }, [photoOfDayHasMoreOlder]);
+
+  useEffect(() => {
+    feedHasMoreOlderRef.current = feedHasMoreOlder;
+  }, [feedHasMoreOlder]);
 
   useEffect(() => {
     if (galleryPhotos.length === 0) {
@@ -1940,7 +1987,9 @@ export default function HomePage() {
             )
           `,
           )
-          .order('created_at', { ascending: true });
+          .eq('is_deleted', false)
+          .order('created_at', { ascending: false })
+          .limit(FEED_PAGE_SIZE);
 
         if (!isMountedRef.current || requestId !== postsRequestIdRef.current) return;
 
@@ -1965,6 +2014,8 @@ export default function HomePage() {
           const mapped = rowsWithUrls.map((row) =>
             mapPostRowToMessage(row, adminUserIdRef.current, pollDataByPostId),
           );
+          // Keep existing chat-like UI order (oldest -> newest).
+          const ascendingMessages = [...mapped].reverse();
           const commentMap: Record<string, Comment[]> = {};
           rowsWithUrls.forEach((row) => {
             const mappedComments = (row.comments || [])
@@ -1974,10 +2025,18 @@ export default function HomePage() {
               commentMap[row.id] = mappedComments;
             }
           });
-          setFeedMessages(mapped);
+          setFeedMessages(ascendingMessages);
           setCommentsByPostId(commentMap);
           setPostsSource('supabase');
-          console.info(`[data] Loaded ${mapped.length} posts from Supabase`);
+          feedPagesLoadedRef.current = 1;
+          feedAutoPagesLoadedRef.current = 1;
+          feedLoadedCursorsRef.current = new Set(['__first__']);
+          const oldest = ascendingMessages[0]?.createdAt || null;
+          feedOldestCursorRef.current = oldest;
+          const hasMore = mapped.length === FEED_PAGE_SIZE;
+          setFeedHasMoreOlder(hasMore);
+          setFeedShowLoadMore(false);
+          console.info(`[data] Loaded ${ascendingMessages.length} posts from Supabase (page 1)`);
           if (reason !== 'initial') {
             showToast('Feed updated');
           }
@@ -1991,7 +2050,161 @@ export default function HomePage() {
         }
       }
     },
-    [showToast, loadPollDataForPosts],
+    [FEED_PAGE_SIZE, loadPollDataForPosts, showToast],
+  );
+
+  const loadMoreFeedPosts = useCallback(
+    async (mode: 'auto' | 'manual') => {
+      const supabase = getSupabaseBrowserClient();
+      if (!supabase || postsSource !== 'supabase') return;
+      if (!feedHasMoreOlderRef.current) return;
+      if (feedLoadingMoreRef.current || loadingPostsRef.current) return;
+
+      // Auto-loading is capped to the first 3 pages (21 posts).
+      if (mode === 'auto' && feedPagesLoadedRef.current >= FEED_AUTO_PAGE_LIMIT) {
+        setFeedShowLoadMore(true);
+        return;
+      }
+
+      const oldestCursor =
+        feedOldestCursorRef.current ||
+        (feedMessages.length > 0 ? feedMessages[0]?.createdAt || null : null);
+      if (!oldestCursor) {
+        setFeedHasMoreOlder(false);
+        return;
+      }
+
+      // Do not refetch the same cursor in one session.
+      const cursorKey = oldestCursor;
+      if (feedLoadedCursorsRef.current.has(cursorKey)) {
+        return;
+      }
+      feedLoadedCursorsRef.current.add(cursorKey);
+
+      feedLoadingMoreRef.current = true;
+      setFeedLoadingMore(true);
+
+      const scrollTarget = getScrollTarget();
+      const preserveScroll = Boolean(scrollTarget && typeof (scrollTarget as HTMLElement).scrollTop === 'number');
+      const prevScrollTop = preserveScroll ? (scrollTarget as HTMLElement).scrollTop : 0;
+      const prevScrollHeight = preserveScroll ? (scrollTarget as HTMLElement).scrollHeight : 0;
+
+      try {
+        const { data, error } = await supabase
+          .from('posts')
+          .select(
+            `
+              id,
+              author_id,
+              type,
+              title,
+              body_text,
+              created_at,
+              updated_at,
+              is_deleted,
+              visibility,
+              metadata,
+              post_media (
+                id,
+                post_id,
+                storage_path,
+                media_type,
+                width,
+                height,
+                duration,
+                created_at
+              ),
+              comments:comments (
+                id,
+                post_id,
+                user_id,
+                body_text,
+                created_at,
+                updated_at,
+                is_deleted
+              )
+            `,
+          )
+          .eq('is_deleted', false)
+          .lt('created_at', oldestCursor)
+          .order('created_at', { ascending: false })
+          .limit(FEED_PAGE_SIZE);
+
+        if (error) throw error;
+
+        const rows = ((data as PostRow[]) || []).filter((row) => !row.is_deleted);
+        let pollDataByPostId: PollDataByPostId = {};
+        try {
+          pollDataByPostId = await loadPollDataForPosts(supabase, rows);
+        } catch (pollErr) {
+          console.warn('[data] Failed to load poll data (page)', pollErr);
+        }
+        const rowsWithUrls = await resolveMediaForRows(rows);
+        const mapped = rowsWithUrls.map((row) => mapPostRowToMessage(row, adminUserIdRef.current, pollDataByPostId));
+        const olderAscending = [...mapped].reverse();
+
+        // Prepend unique messages.
+        setFeedMessages((prev) => {
+          const existingIds = new Set(prev.map((m) => m.id));
+          const uniqueOlder = olderAscending.filter((m) => !existingIds.has(m.id));
+          const next = uniqueOlder.length ? [...uniqueOlder, ...prev] : prev;
+          feedOldestCursorRef.current = next[0]?.createdAt || feedOldestCursorRef.current;
+          return next;
+        });
+
+        // Merge comments for these posts only.
+        setCommentsByPostId((prev) => {
+          const next = { ...prev };
+          rowsWithUrls.forEach((row) => {
+            const mappedComments = (row.comments || [])
+              .filter((c) => !c.is_deleted)
+              .map((c) => mapCommentRow(c, adminUserIdRef.current));
+            if (mappedComments.length) {
+              next[row.id] = mappedComments;
+            }
+          });
+          return next;
+        });
+
+        feedPagesLoadedRef.current += 1;
+        if (mode === 'auto') {
+          feedAutoPagesLoadedRef.current += 1;
+        }
+
+        const hasMore = mapped.length === FEED_PAGE_SIZE;
+        setFeedHasMoreOlder(hasMore);
+        if (!hasMore) {
+          setFeedShowLoadMore(false);
+        } else if (mode === 'auto' && feedPagesLoadedRef.current >= FEED_AUTO_PAGE_LIMIT) {
+          setFeedShowLoadMore(true);
+        }
+
+        // Preserve scroll position after prepending.
+        if (preserveScroll && scrollTarget) {
+          requestAnimationFrame(() => {
+            const el = scrollTarget as HTMLElement;
+            const newScrollHeight = el.scrollHeight;
+            const delta = newScrollHeight - prevScrollHeight;
+            el.scrollTop = prevScrollTop + delta;
+          });
+        }
+      } catch (err) {
+        console.error('[data] Failed to load more posts', err);
+        showToast(`Failed to load more: ${friendlySupabaseError(err)}`);
+      } finally {
+        feedLoadingMoreRef.current = false;
+        setFeedLoadingMore(false);
+      }
+    },
+    [
+      FEED_AUTO_PAGE_LIMIT,
+      FEED_PAGE_SIZE,
+      feedMessages,
+      getScrollTarget,
+      loadPollDataForPosts,
+      postsSource,
+      showToast,
+    ],
   );
 
   const mapPhotoOfDayRowsToItems = useCallback(async (rows: PhotoOfDayRow[]): Promise<PhotoOfDayItem[]> => {
@@ -2268,7 +2481,10 @@ export default function HomePage() {
     let removeScrollListener: (() => void) | null = null;
 
     const attachScrollListener = (target: HTMLElement) => {
-      const handleScroll = () => scheduleScrollStateCheck();
+      const handleScroll = () => {
+        scheduleScrollStateCheck();
+        scheduleFeedPaginationCheck();
+      };
       const scrollTarget: HTMLElement | Window =
         typeof document !== 'undefined' && target === document.documentElement ? window : target;
       scrollTarget.addEventListener('scroll', handleScroll, { passive: true });
@@ -2306,8 +2522,12 @@ export default function HomePage() {
         cancelAnimationFrame(scrollDistanceRafRef.current);
         scrollDistanceRafRef.current = null;
       }
+      if (feedPaginationRafRef.current !== null) {
+        cancelAnimationFrame(feedPaginationRafRef.current);
+        feedPaginationRafRef.current = null;
+      }
     };
-  }, [resolveScrollContainer, scheduleScrollStateCheck, feedItems.length, activeView]);
+  }, [resolveScrollContainer, scheduleScrollStateCheck, scheduleFeedPaginationCheck, feedItems.length, activeView]);
 
   useEffect(() => {
     evaluateRotateHint();
@@ -4893,6 +5113,22 @@ export default function HomePage() {
 
             {/* Feed without date dividers - date shown in each message's meta */}
             <div className="feed feed--overlay" ref={feedScrollContainerRef}>
+              {feedShowLoadMore && feedHasMoreOlder && (
+                <div
+                  style={{ padding: '10px 0', textAlign: 'center' }}
+                  onClick={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="inline-btn inline-btn--ghost"
+                    onClick={() => void loadMoreFeedPosts('manual')}
+                    disabled={feedLoadingMore}
+                  >
+                    {feedLoadingMore ? 'Loading…' : 'Load more'}
+                  </button>
+                </div>
+              )}
               {feedItems.map((item) => {
                 // Skip date dividers - date is now shown in message__meta
                 if (item.type === 'date') return null;
