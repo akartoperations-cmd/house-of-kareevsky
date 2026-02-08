@@ -190,6 +190,18 @@ export default function WelcomePage() {
             )}
           </div>
 
+          <div
+            className="welcome-block"
+            style={{
+              fontFamily: 'var(--font-ui)',
+              fontSize: '14px',
+              lineHeight: 1.6,
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {'Pricing (monthly): $10 / $20 / $30 / $50 / $100\nSame full access on every tier. The difference is simply how strongly you choose to invest in the speed and scale of this project — and a clear signal that you value my art.\n$100 tier: Full access + one handwritten physical letter from me every month.'}
+          </div>
+
           {externalPlatforms.length > 0 && (
             <div className="welcome-preview">
               <div className="welcome-preview__text">
@@ -214,6 +226,24 @@ export default function WelcomePage() {
               </div>
             </div>
           )}
+
+          <div
+            className="welcome-block"
+            style={{
+              fontFamily: 'var(--font-ui)',
+              fontSize: '14px',
+              lineHeight: 1.7,
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: '16px', marginBottom: '10px' }}>
+              Subscription Offer (Full Access)
+            </div>
+            <div style={{ fontWeight: 700, marginBottom: '6px' }}>What you receive</div>
+            <div style={{ marginBottom: '14px' }}>Full access to the Platform and its content feed.</div>
+            <div style={{ whiteSpace: 'pre-wrap' }}>
+              {'## Pricing & tiers (monthly)\nImportant: the access is identical on every tier.\nThe difference is simply the scale of your investment in the speed and growth of the project — more possibilities for recording, filming, renting and buying equipment — and a clear message that you want to accelerate my path and results.\n\n$10 / month — Full access\n\n$20 / month — Stronger investment\nFull access. A bigger choice for speed and momentum.\n\n$30 / month — Acceleration\nFull access. A clearer push for quality and consistency.\n\n$50 / month — Major investment\nFull access. A strong contribution to faster growth.\n\n$100 / month — Maximum investment\nFull access + one handwritten physical letter from me every month.'}
+            </div>
+          </div>
 
           <div className="welcome-returning">
             {showReturnerForm && (
