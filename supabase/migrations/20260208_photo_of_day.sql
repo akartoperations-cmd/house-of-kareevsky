@@ -20,38 +20,8 @@ CREATE TABLE IF NOT EXISTS public.photo_of_day (
 
 CREATE INDEX IF NOT EXISTS idx_photo_of_day_created_at ON public.photo_of_day (created_at DESC);
 
--- Grants (required even when RLS is enabled)
-GRANT USAGE ON SCHEMA public TO anon, authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.photo_of_day TO anon, authenticated;
-
--- Enable Row Level Security and scoped policies
-ALTER TABLE public.photo_of_day ENABLE ROW LEVEL SECURITY;
-
--- Allow signed-in users to read Photo of the Day.
-CREATE POLICY IF NOT EXISTS photo_of_day_select_authenticated
-ON public.photo_of_day
-FOR SELECT
-TO authenticated
-USING (true);
-
--- Allow inserts only when created_by matches the authenticated user.
-CREATE POLICY IF NOT EXISTS photo_of_day_insert_own
-ON public.photo_of_day
-FOR INSERT
-TO authenticated
-WITH CHECK (auth.uid() = created_by);
-
--- Allow updates/deletes only by row owner.
-CREATE POLICY IF NOT EXISTS photo_of_day_update_own
-ON public.photo_of_day
-FOR UPDATE
-TO authenticated
-USING (auth.uid() = created_by)
-WITH CHECK (auth.uid() = created_by);
-
-CREATE POLICY IF NOT EXISTS photo_of_day_delete_own
-ON public.photo_of_day
-FOR DELETE
-TO authenticated
-USING (auth.uid() = created_by);
+-- Grants (RLS is intentionally NOT enabled here; can be added later.)
+-- Keep access restricted to authenticated users for now.
+GRANT USAGE ON SCHEMA public TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.photo_of_day TO authenticated;
 
