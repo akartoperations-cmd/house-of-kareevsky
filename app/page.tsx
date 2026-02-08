@@ -440,6 +440,110 @@ const readImageDimensions = (file: File): Promise<{ width?: number; height?: num
     img.src = objectUrl;
   });
 
+const createImagePreviewFile = async (file: File, options?: { maxSize?: number; quality?: number }) => {
+  const maxSize = options?.maxSize ?? 900;
+  const quality = options?.quality ?? 0.78;
+  if (typeof document === 'undefined') return null;
+  if (!file.type.startsWith('image/')) return null;
+
+  try {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('preview image load failed'));
+      img.src = objectUrl;
+    });
+    URL.revokeObjectURL(objectUrl);
+
+    const w = img.naturalWidth || 0;
+    const h = img.naturalHeight || 0;
+    if (!w || !h) return null;
+
+    const scale = Math.min(1, maxSize / Math.max(w, h));
+    const outW = Math.max(1, Math.round(w * scale));
+    const outH = Math.max(1, Math.round(h * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = outW;
+    canvas.height = outH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, outW, outH);
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), 'image/jpeg', quality),
+    );
+    if (!blob) return null;
+
+    const name = file.name.replace(/\.[^.]+$/, '') || 'image';
+    return new File([blob], `${name}-preview.jpg`, { type: 'image/jpeg' });
+  } catch {
+    return null;
+  }
+};
+
+const createVideoPosterFromMiddle = async (file: File, options?: { quality?: number }) => {
+  const quality = options?.quality ?? 0.82;
+  if (typeof document === 'undefined') return null;
+  if (!file.type.startsWith('video/')) return null;
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const video = document.createElement('video');
+    video.src = objectUrl;
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+
+    await new Promise<void>((resolve, reject) => {
+      video.onloadedmetadata = () => resolve();
+      video.onerror = () => reject(new Error('video metadata failed'));
+    });
+
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    const targetTime = duration > 0 ? Math.max(0, Math.min(duration - 0.1, duration * 0.5)) : 0;
+
+    await new Promise<void>((resolve) => {
+      const done = () => resolve();
+      const seekTo = () => {
+        try {
+          video.currentTime = targetTime;
+        } catch {
+          done();
+        }
+      };
+      video.onseeked = () => done();
+      // Some browsers need a play/pause cycle to allow seeking.
+      video.onloadeddata = () => seekTo();
+      seekTo();
+      setTimeout(done, 1200);
+    });
+
+    const w = video.videoWidth || 0;
+    const h = video.videoHeight || 0;
+    if (!w || !h) return null;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, w, h);
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), 'image/jpeg', quality),
+    );
+    if (!blob) return null;
+
+    return new File([blob], 'video-poster.jpg', { type: 'image/jpeg' });
+  } catch {
+    return null;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+};
+
 const readVideoMetadata = (file: File): Promise<{ width?: number; height?: number; duration?: number }> =>
   new Promise((resolve) => {
     const video = document.createElement('video');
@@ -579,6 +683,11 @@ const mapPostRowToMessage = (
       : (meta.image_urls as string[] | undefined) ||
         (meta.images as string[] | undefined) ||
         [];
+  const imagePreviews =
+    (meta.image_preview_urls as string[] | undefined) ||
+    (meta.image_previews as string[] | undefined) ||
+    (meta.preview_image_urls as string[] | undefined) ||
+    [];
   const messageType = coerceMessageType(row.type);
   const i18nPack = meta.i18n_pack as I18nPack | undefined;
   const pollData = pollDataByPostId?.[row.id];
@@ -630,11 +739,20 @@ const mapPostRowToMessage = (
   };
 
   if (messageType === 'photo') {
-    message.imageUrl = images?.[0];
-    message.images = images;
+    const feedImages = imagePreviews && imagePreviews.length > 0 ? imagePreviews : images;
+    message.imageUrl = feedImages?.[0];
+    message.images = feedImages;
+    message.fullImages = images;
   }
   if (messageType === 'video') {
     message.videoUrl = videoUrl;
+    const posterUrl = (meta.video_poster_url as string | undefined) || (meta.video_poster as string | undefined);
+    const posterPath = meta.video_poster_path as string | undefined;
+    if (posterUrl) {
+      message.videoPosterUrl = posterUrl;
+    } else if (posterPath) {
+      message.videoPosterPath = posterPath;
+    }
   }
   if (messageType === 'audio') {
     message.audioUrl = audioUrl;
@@ -3869,6 +3987,51 @@ export default function HomePage() {
 
           const imageUrls = !mediaIsVideo ? resolvedMedia.map((m) => m.url || m.storage_path) : undefined;
           const videoUrl = mediaIsVideo ? resolvedMedia[0]?.url || resolvedMedia[0]?.storage_path : undefined;
+          let imagePreviewUrls: string[] | undefined;
+          let imagePreviewPaths: string[] | undefined;
+          let videoPosterUrl: string | undefined;
+          let videoPosterPath: string | undefined;
+
+          // Generate lightweight previews/posters once at upload time (not at feed view time).
+          try {
+            if (!mediaIsVideo) {
+              const previewFiles = await Promise.all(mediaFiles.map((file) => createImagePreviewFile(file)));
+              const previewUploads = await Promise.all(
+                previewFiles.map((preview) =>
+                  preview
+                    ? uploadMedia(preview, 'image', {
+                        bucket: MEDIA_BUCKET,
+                        postId: newPostId as string,
+                        preferSignedUrl: true,
+                      })
+                    : Promise.resolve(null),
+                ),
+              );
+              const ok = previewUploads.filter(Boolean) as MediaUploadResult[];
+              if (ok.length > 0) {
+                ok.forEach((u) => uploadedPaths.push(u.storagePath));
+                imagePreviewUrls = ok.map((u) => u.url);
+                imagePreviewPaths = ok.map((u) => u.storagePath);
+              }
+            } else {
+              const posterFile = await createVideoPosterFromMiddle(mediaFiles[0] as File);
+              if (posterFile) {
+                const posterUpload = await uploadMedia(posterFile, 'image', {
+                  bucket: MEDIA_BUCKET,
+                  postId: newPostId as string,
+                  preferSignedUrl: true,
+                });
+                uploadedPaths.push(posterUpload.storagePath);
+                videoPosterUrl = posterUpload.url;
+                videoPosterPath = posterUpload.storagePath;
+              }
+            }
+          } catch (previewErr) {
+            // Best-effort only: continue without previews/poster.
+            if (process.env.NODE_ENV !== 'production') {
+              console.warn('[media-upload] Preview/poster generation failed (continuing).', previewErr);
+            }
+          }
 
           const { data: updatedPost, error: updateError } = await supabase
             .from('posts')
@@ -3876,7 +4039,11 @@ export default function HomePage() {
               metadata: {
                 ...baseMetadata,
                 image_urls: imageUrls,
+                image_preview_urls: imagePreviewUrls,
+                image_preview_paths: imagePreviewPaths,
                 video_url: videoUrl,
+                video_poster_url: videoPosterUrl,
+                video_poster_path: videoPosterPath,
               },
             })
             .eq('id', newPostId)
@@ -5078,12 +5245,13 @@ export default function HomePage() {
           <div className="gallery-grid">
             {photoPostMessages.map((msg) => {
               const images = msg.images && msg.images.length > 0 ? msg.images : msg.imageUrl ? [msg.imageUrl] : [];
+              const fullImages = msg.fullImages && msg.fullImages.length > 0 ? msg.fullImages : images;
               if (images.length === 0) return null;
               return (
                 <div
                   key={msg.id}
                   className="gallery-item"
-                  onClick={() => openPostGallery(images)}
+                  onClick={() => openPostGallery(fullImages)}
                 >
                   <img src={images[0]} alt="" className="gallery-item__image" />
                   {images.length > 1 && (
