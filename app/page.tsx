@@ -3266,6 +3266,16 @@ export default function HomePage() {
       return;
     }
 
+    // In the Supabase feed we use "scroll to top" to paginate older posts.
+    // Disable pull-to-refresh gesture to avoid accidentally resetting the feed back to page 1.
+    if (activeView === 'home' && postsSource === 'supabase') {
+      if (pullDistanceRef.current !== 0) {
+        pullDistanceRef.current = 0;
+        setPullDistance(0);
+      }
+      return;
+    }
+
     const distance = Math.min(deltaY, 120);
     pullDistanceRef.current = distance;
     setPullDistance(distance);
@@ -3277,7 +3287,8 @@ export default function HomePage() {
       (scrollElementRef.current?.scrollTop || 0) <= 0 ||
       (document.documentElement?.scrollTop || 0) <= 0 ||
       window.scrollY <= 0;
-    const shouldRefresh = pullDistanceRef.current > 60 && atTop;
+    const allowPullToRefresh = !(activeView === 'home' && postsSource === 'supabase');
+    const shouldRefresh = allowPullToRefresh && pullDistanceRef.current > 60 && atTop;
 
     if (pullDistanceRef.current !== 0) {
       pullDistanceRef.current = 0;
