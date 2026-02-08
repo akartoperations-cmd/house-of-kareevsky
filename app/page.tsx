@@ -1262,6 +1262,7 @@ export default function HomePage() {
   const feedOldestCursorRef = useRef<string | null>(null);
   const feedPaginationRafRef = useRef<number | null>(null);
   const feedLastAutoLoadAtRef = useRef(0);
+  const loadMoreFeedPostsRef = useRef<((mode: 'auto' | 'manual') => Promise<void>) | null>(null);
   const [postsSource, setPostsSource] = useState<'supabase' | 'mock' | 'uninitialized'>('uninitialized');
   const [loadingPosts, setLoadingPosts] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
@@ -1666,9 +1667,9 @@ export default function HomePage() {
       if (now - feedLastAutoLoadAtRef.current < 1200) return;
       feedLastAutoLoadAtRef.current = now;
 
-      void loadMoreFeedPosts('auto');
+      void loadMoreFeedPostsRef.current?.('auto');
     });
-  }, [FEED_AUTO_PAGE_LIMIT, activeView, getScrollTarget, loadMoreFeedPosts, postsSource]);
+  }, [FEED_AUTO_PAGE_LIMIT, activeView, getScrollTarget, postsSource]);
 
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto') => {
@@ -2559,6 +2560,10 @@ export default function HomePage() {
       showToast,
     ],
   );
+
+  useEffect(() => {
+    loadMoreFeedPostsRef.current = loadMoreFeedPosts;
+  }, [loadMoreFeedPosts]);
 
   const mapPhotoOfDayRowsToItems = useCallback(async (rows: PhotoOfDayRow[]): Promise<PhotoOfDayItem[]> => {
     const paths = rows.map((r) => r.image_path).filter(Boolean);
