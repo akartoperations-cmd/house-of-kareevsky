@@ -235,13 +235,10 @@ export default function WelcomePage() {
               lineHeight: 1.7,
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: '16px', marginBottom: '10px' }}>
-              Subscription Offer (Full Access)
-            </div>
-            <div style={{ fontWeight: 700, marginBottom: '6px' }}>What you receive</div>
-            <div style={{ marginBottom: '14px' }}>Full access to the Platform and its content feed.</div>
             <div style={{ whiteSpace: 'pre-wrap' }}>
-              {'## Pricing & tiers (monthly)\nImportant: the access is identical on every tier.\nThe difference is simply the scale of your investment in the speed and growth of the project — more possibilities for recording, filming, renting and buying equipment — and a clear message that you want to accelerate my path and results.\n\n$10 / month — Full access\n\n$20 / month — Stronger investment\nFull access. A bigger choice for speed and momentum.\n\n$30 / month — Acceleration\nFull access. A clearer push for quality and consistency.\n\n$50 / month — Major investment\nFull access. A strong contribution to faster growth.\n\n$100 / month — Maximum investment\nFull access + one handwritten physical letter from me every month.'}
+              {
+                "Subscription Offer (Full Access)\n\nBy entering the House of Kareevsky, you step into a private, closed space where my art lives in its full form.\n\nInside you’ll find music, literature, audio, video, paintings, drafts, notes, and the process itself.\nThe format is intimate — like a personal vlog and a messenger-style feed: direct, human, and outside social platforms and algorithms.\n\nWhat you receive\nFull access to the Platform and its content feed (texts, audio, video, paintings, behind-the-scenes fragments).\nAccess is for personal viewing/listening/reading only.\n\nHow you get access (after purchase)\n1) Tap “Enter” to open the Digistore24 checkout page.\n2) Complete the purchase.\n3) On the Thank You page, enter your email one more time.\n4) You will receive an email with your personal access link.\n5) Open the link — you will enter the private feed.\n6) After you enter, open the menu and choose “Install to Home Screen” to add the app on your phone.\n\nPricing & tiers (monthly)\nImportant: the access is identical on every tier. The difference is simply the scale of your investment in the speed and growth of the project — more possibilities for recording, filming, renting and buying equipment — and a clear message that you want to accelerate my path and results.\n\n$10 / month: Full access.\n$20 / month: Full access + a stronger investment in the project’s speed and growth.\n$30 / month: Full access + a high investment in the project’s speed and growth.\n$50 / month: Full access + a major investment in the project’s speed and growth.\n$100 / month: Full access + one handwritten physical letter from me every month."
+              }
             </div>
           </div>
 
