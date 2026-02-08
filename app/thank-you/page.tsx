@@ -148,7 +148,7 @@ export default function ThankYouPage() {
 
         <div className="welcome-footer">
           <div className="welcome-footer__links">
-            <small>The debit will be performed by Digistore24.com</small>
+            <small>Payments are processed by Digistore24.</small>
           </div>
           <div className="welcome-footer__links">
             <Link href="/terms" className="welcome-link">

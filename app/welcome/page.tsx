@@ -301,6 +301,9 @@ export default function WelcomePage() {
 
         <div className="welcome-footer">
           <div className="welcome-footer__links">
+            <small>Payments are processed by Digistore24.</small>
+          </div>
+          <div className="welcome-footer__links">
             <Link href="/terms" className="welcome-link">
               Terms
             </Link>
