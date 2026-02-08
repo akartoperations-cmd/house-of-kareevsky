@@ -35,7 +35,17 @@ export interface Message {
   isTest?: boolean;
   imageUrl?: string;
   images?: string[];
+  /**
+   * Optional higher-resolution originals (loaded on tap/open).
+   * When present, `images` may contain lightweight previews for the feed.
+   */
+  fullImages?: string[];
   videoUrl?: string;
+  /**
+   * Optional poster for video posts (lightweight image).
+   */
+  videoPosterUrl?: string;
+  videoPosterPath?: string;
   audioUrl?: string;
   audioStoragePath?: string;
   text?: string;

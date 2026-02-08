@@ -385,6 +385,43 @@ const triggerPushEvent = async (payload: PushEventPayload) => {
   }
 };
 
+const TRANSPARENT_PIXEL =
+  'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+
+function useElementVisibleOnce<T extends Element>(options?: IntersectionObserverInit & { rootMargin?: string }) {
+  const ref = useRef<T | null>(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (visible) return;
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry?.isIntersecting) {
+          setVisible(true);
+          obs.disconnect();
+        }
+      },
+      {
+        root: options?.root ?? null,
+        rootMargin: options?.rootMargin ?? '600px 0px',
+        threshold: options?.threshold ?? 0.01,
+      },
+    );
+
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [options?.root, options?.rootMargin, options?.threshold, visible]);
+
+  return { ref, visible };
+}
+
 const readImageDimensions = (file: File): Promise<{ width?: number; height?: number }> =>
   new Promise((resolve) => {
     const img = new Image();
@@ -6249,6 +6286,44 @@ interface MessageBubbleProps {
   actionMenu?: React.ReactNode;
 }
 
+function LazyImg({
+  src,
+  alt,
+  className,
+  style,
+  onClick,
+  role,
+  tabIndex,
+  onKeyDown,
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+  style?: React.CSSProperties;
+  onClick?: () => void;
+  role?: string;
+  tabIndex?: number;
+  onKeyDown?: (e: React.KeyboardEvent) => void;
+}) {
+  const { ref, visible } = useElementVisibleOnce<HTMLImageElement>({ rootMargin: '800px 0px' });
+  return (
+    <img
+      ref={ref}
+      src={visible ? src : TRANSPARENT_PIXEL}
+      alt={alt}
+      className={className}
+      style={style}
+      loading="lazy"
+      decoding="async"
+      fetchPriority="low"
+      onClick={onClick}
+      role={role}
+      tabIndex={tabIndex}
+      onKeyDown={onKeyDown}
+    />
+  );
+}
+
 function MessageBubble({
   message,
   isBookmarked,
@@ -6267,6 +6342,7 @@ function MessageBubble({
 }: MessageBubbleProps) {
   const [i18nSelectedLang, setI18nSelectedLang] = useState<I18nLang>('en');
   const [i18nImageIndex, setI18nImageIndex] = useState(0);
+  const [videoRequested, setVideoRequested] = useState(false);
 
   // Deterrence only: not DRM and cannot block screen recording
   const isReader = !isAdmin;
@@ -6276,6 +6352,7 @@ function MessageBubble({
   useEffect(() => {
     setI18nSelectedLang('en');
     setI18nImageIndex(0);
+    setVideoRequested(false);
   }, [message.id]);
 
   useEffect(() => {
@@ -6390,7 +6467,7 @@ function MessageBubble({
               />
             )}
             {currentImage && (
-              <img
+              <LazyImg
                 src={currentImage}
                 alt={`${langLabels[currentItem?.lang || 'en'].code} version`}
                 className="i18n-carousel__image"
@@ -6570,6 +6647,7 @@ function MessageBubble({
     // Use message.caption if exists, else fallback to photoCaptions for backwards compat
     const caption = message.caption || photoCaptions[message.id];
     const photoSet = message.images && message.images.length > 0 ? message.images : message.imageUrl ? [message.imageUrl] : [];
+    const fullSet = message.fullImages && message.fullImages.length > 0 ? message.fullImages : photoSet;
     const showGrid = photoSet.length > 1;
     // For grids: show 2x2 for 4+, 2+1 for 3, 2 for 2
     const displayPhotos = photoSet.slice(0, 4);
@@ -6581,11 +6659,11 @@ function MessageBubble({
           className={`message__bubble message__bubble--photo ${showGrid ? 'message__bubble--grid' : ''} ${deterrentClass}`}
           role="button"
           tabIndex={0}
-          onClick={() => onOpenGallery(photoSet)}
+          onClick={() => onOpenGallery(fullSet)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
-              onOpenGallery(photoSet);
+              onOpenGallery(fullSet);
             }
           }}
           onContextMenu={handleContentContextMenu}
@@ -6594,14 +6672,14 @@ function MessageBubble({
             <div
               className="deterrent-media-guard"
               aria-hidden="true"
-              onClick={() => onOpenGallery(photoSet)}
+              onClick={() => onOpenGallery(fullSet)}
             />
           )}
           {showGrid ? (
             <div className={`message__photo-grid message__photo-grid--${Math.min(displayPhotos.length, 4)}`}>
               {displayPhotos.map((src, idx) => (
                 <div key={idx} className="message__photo-grid-item">
-                  <img src={src} alt="" className="message__grid-image" />
+                  <LazyImg src={src} alt="" className="message__grid-image" />
                   {idx === displayPhotos.length - 1 && extraCount > 0 && (
                     <div className="message__photo-grid-more">+{extraCount}</div>
                   )}
@@ -6609,7 +6687,7 @@ function MessageBubble({
               ))}
             </div>
           ) : (
-            <img src={photoSet[0]} alt="" className="message__image" />
+            <LazyImg src={photoSet[0]} alt="" className="message__image" />
           )}
           {/* Date shown at bottom-right next to time */}
           <div className="message__meta message__meta--photo">
@@ -6722,6 +6800,7 @@ function MessageBubble({
   }
 
   if (message.type === 'video') {
+    const posterUrl = message.videoPosterUrl;
     return (
       <div className="message">
         <div
@@ -6729,14 +6808,73 @@ function MessageBubble({
           style={{ width: 'auto', maxWidth: '100%' }}
           onContextMenu={handleContentContextMenu}
         >
-          <video
-            src={message.videoUrl}
-            controls
-            controlsList={isReader ? 'nodownload' : undefined}
-            playsInline
-            preload="metadata"
-            style={{ width: '100%', maxWidth: '280px', borderRadius: '16px', objectFit: 'contain' }}
-          />
+          {!videoRequested ? (
+            <div
+              style={{
+                position: 'relative',
+                width: '100%',
+                maxWidth: '280px',
+                borderRadius: '16px',
+                overflow: 'hidden',
+              }}
+              onClick={() => setVideoRequested(true)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setVideoRequested(true);
+                }
+              }}
+            >
+              {posterUrl ? (
+                <LazyImg
+                  src={posterUrl}
+                  alt=""
+                  style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block' }}
+                />
+              ) : (
+                <div style={{ width: '100%', aspectRatio: '16 / 9', background: 'rgba(255,255,255,0.06)' }} />
+              )}
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: 'linear-gradient(to bottom, rgba(0,0,0,0.0), rgba(0,0,0,0.25))',
+                }}
+                aria-hidden="true"
+              >
+                <div
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 28,
+                    background: 'rgba(0,0,0,0.45)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'white',
+                    border: '1px solid rgba(255,255,255,0.25)',
+                  }}
+                >
+                  {Icons.play}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <video
+              src={message.videoUrl}
+              controls
+              controlsList={isReader ? 'nodownload' : undefined}
+              playsInline
+              preload="none"
+              autoPlay
+              style={{ width: '100%', maxWidth: '280px', borderRadius: '16px', objectFit: 'contain' }}
+            />
+          )}
           <div className="message__meta message__meta--photo">
             {message.createdAt ? `${formatShortDate(message.createdAt)} • ${message.time}` : message.time}
             {actionMenu}
