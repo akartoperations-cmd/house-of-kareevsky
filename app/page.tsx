@@ -264,6 +264,15 @@ const PHOTO_OF_DAY_CACHE_KEYS = {
 
 const isProbablyUrl = (value: string) => /^https?:\/\//i.test(value);
 
+const toErrorMeta = (err: unknown): { code?: string; message?: string; statusCode?: number } => {
+  const anyErr = (err || {}) as { code?: string; message?: string; statusCode?: number; error_description?: string };
+  return {
+    code: anyErr.code,
+    message: anyErr.message || anyErr.error_description,
+    statusCode: anyErr.statusCode,
+  };
+};
+
 const readPhotoOfDayCache = (): PhotoOfDayItem | null => {
   if (typeof window === 'undefined') return null;
   try {
@@ -1989,7 +1998,14 @@ export default function HomePage() {
     const paths = rows.map((r) => r.image_path).filter(Boolean);
     const urlMap = await resolvePathsToSignedUrls(paths, { bucket: MEDIA_BUCKET, preferSignedUrl: true });
     return rows.map((row) => {
-      const url = urlMap.get(row.image_path) || row.image_path;
+      const resolved = urlMap.get(row.image_path) || row.image_path;
+      let url = resolved;
+      // Safety: never return a relative storage path as an <img src>.
+      if (url && !isProbablyUrl(url)) {
+        const supabase = getSupabaseBrowserClient();
+        const { data: pubData } = supabase ? supabase.storage.from(MEDIA_BUCKET).getPublicUrl(row.image_path) : { data: null };
+        url = pubData?.publicUrl || url;
+      }
       return {
         id: row.id,
         url,
@@ -2000,6 +2016,26 @@ export default function HomePage() {
         imagePath: row.image_path,
       };
     });
+  }, []);
+
+  const friendlyPhotoOfDayError = useCallback((err: unknown): string => {
+    const meta = toErrorMeta(err);
+    const code = (meta.code || '').trim();
+    const msg = (meta.message || '').toLowerCase();
+
+    if (code === '42501' || msg.includes('row-level security') || msg.includes('permission')) {
+      return 'No access to Photo of the Day (RLS). Ensure policies allow authenticated SELECT/INSERT.';
+    }
+    if (code === '42P01' || msg.includes('relation') || msg.includes('does not exist')) {
+      return 'Table "photo_of_day" not found. Apply the Supabase migration, then retry.';
+    }
+    if (msg.includes('bucket') && msg.includes('not found')) {
+      return 'Storage bucket not found. Ensure the "media" bucket exists.';
+    }
+    if (msg.includes('jwt') || msg.includes('token') || msg.includes('session')) {
+      return 'Session not ready. Please retry after sign-in.';
+    }
+    return friendlySupabaseError(err);
   }, []);
 
   const refreshLatestPhotoOfDay = useCallback(
@@ -2029,7 +2065,7 @@ export default function HomePage() {
         if (error) {
           console.error('[photo-of-day] Failed to load latest', error);
           if (reason === 'manual') {
-            showToast(`Failed to refresh photo: ${friendlySupabaseError(error)}`);
+            showToast(`Failed to refresh photo: ${friendlyPhotoOfDayError(error)}`);
           }
           return;
         }
@@ -2053,7 +2089,7 @@ export default function HomePage() {
       } catch (err) {
         console.error('[photo-of-day] Unexpected error while loading latest', err);
         if (reason === 'manual') {
-          showToast(`Failed to refresh photo: ${friendlySupabaseError(err)}`);
+          showToast(`Failed to refresh photo: ${friendlyPhotoOfDayError(err)}`);
         }
       } finally {
         if (requestId === photoOfDayRequestIdRef.current) {
@@ -2061,7 +2097,7 @@ export default function HomePage() {
         }
       }
     },
-    [mapPhotoOfDayRowsToItems, showToast],
+    [friendlyPhotoOfDayError, mapPhotoOfDayRowsToItems, showToast],
   );
 
   useEffect(() => {
@@ -2070,8 +2106,10 @@ export default function HomePage() {
 
   useEffect(() => {
     if (activeView !== 'home') return;
+    if (access.status !== 'allowed') return;
+    if (!currentUserId) return;
     refreshLatestPhotoOfDay('open');
-  }, [activeView, refreshLatestPhotoOfDay]);
+  }, [activeView, access.status, currentUserId, refreshLatestPhotoOfDay]);
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
@@ -3720,12 +3758,19 @@ export default function HomePage() {
 
     setPhotoOfDayPublishing(true);
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const userId = sessionData?.session?.user?.id ?? null;
+      const userId = currentUserId;
       if (!userId) {
         showToast('Please sign in to publish.');
         return;
       }
+
+      // Preflight: fail fast (RLS/table missing) before uploading files.
+      const { error: accessError } = await supabase.from(PHOTO_OF_DAY_TABLE).select('id').limit(1);
+      if (accessError) {
+        throw accessError;
+      }
+
+      showToast('Publishing…', 1500);
 
       const uploads = await Promise.all(
         newPhotoDayFiles.map((file) => uploadMedia(file, 'image', { bucket: MEDIA_BUCKET, preferSignedUrl: true })),
@@ -3758,7 +3803,7 @@ export default function HomePage() {
       await refreshLatestPhotoOfDay('manual');
     } catch (err) {
       console.error('[photo-of-day] Failed to publish', err);
-      showToast(`Failed to publish photo: ${friendlySupabaseError(err)}`);
+      showToast(`Failed to publish photo: ${friendlyPhotoOfDayError(err)}`);
     } finally {
       setPhotoOfDayPublishing(false);
     }
