@@ -57,7 +57,7 @@ export default function TermsPage() {
           </p>
 
           <h2 style={{ fontSize: '18px', fontWeight: '600', marginTop: '24px', marginBottom: '12px' }}>
-            CONTRACTUAL PARTNERS (Merchant of Record)
+            2. CONTRACTUAL PARTNERS (Merchant of Record)
           </h2>
           <p style={{ marginBottom: '12px' }}>
             2.1. For all paid transactions, Digistore24 GmbH (Germany) acts as the Merchant of Record and contractual partner for payment processing and invoicing.
@@ -70,10 +70,10 @@ export default function TermsPage() {
             3. RIGHT OF WITHDRAWAL &amp; REFUNDS
           </h2>
           <p style={{ marginBottom: '12px' }}>
-            3.1. By purchasing a subscription and gaining immediate access to digital content, the User expressly consents to the immediate performance of the contract and acknowledges that the statutory right of withdrawal may expire once the digital content has been accessed (streamed or viewed), in accordance with applicable EU consumer protection laws.
+            3.1. If you request immediate access to digital content, you expressly agree that the service begins immediately. Where applicable law provides a right of withdrawal, you acknowledge that this right may be lost once the digital content/service has been provided, in accordance with statutory consumer protection rules.
           </p>
           <p style={{ marginBottom: '12px' }}>
-            3.2. Refunds, cancellations, and chargebacks are handled strictly in accordance with Digistore24&apos;s official refund policy and mandatory consumer protection regulations.
+            {"3.2. Refunds, cancellations, and chargebacks are handled strictly in accordance with Digistore24's official refund policy and mandatory consumer protection regulations."}
           </p>
 
           <h2 style={{ fontSize: '18px', fontWeight: '600', marginTop: '24px', marginBottom: '12px' }}>
