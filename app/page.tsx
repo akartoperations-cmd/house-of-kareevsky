@@ -2026,8 +2026,15 @@ export default function HomePage() {
     if (code === '42501' || msg.includes('row-level security') || msg.includes('permission')) {
       return 'No access to Photo of the Day (RLS). Ensure policies allow authenticated SELECT/INSERT.';
     }
-    if (code === '42P01' || msg.includes('relation') || msg.includes('does not exist')) {
-      return 'Table "photo_of_day" not found. Apply the Supabase migration, then retry.';
+    if (
+      code === '42P01' ||
+      code === 'PGRST205' ||
+      msg.includes('schema cache') ||
+      msg.includes('relation') ||
+      msg.includes('does not exist') ||
+      msg.includes('photo_of_day')
+    ) {
+      return 'Photo of the Day table is missing/not applied in Supabase. Run the migration `supabase/migrations/20260208_photo_of_day.sql` in Supabase SQL Editor, then wait ~30s and refresh.';
     }
     if (msg.includes('bucket') && msg.includes('not found')) {
       return 'Storage bucket not found. Ensure the "media" bucket exists.';
