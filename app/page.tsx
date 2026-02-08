@@ -240,6 +240,72 @@ type PollDataByPostId = Record<string, PollMessageData>;
 
 const ADMIN_USER_ID = process.env.NEXT_PUBLIC_ADMIN_USER_ID || null;
 
+type PhotoOfDayRow = {
+  id: string;
+  created_at: string;
+  image_path: string;
+  caption: string | null;
+  created_by: string | null;
+};
+
+type PhotoOfDayItem = Photo & {
+  createdAt: string;
+  imagePath?: string;
+};
+
+const PHOTO_OF_DAY_TABLE = 'photo_of_day';
+const PHOTO_OF_DAY_CACHE_KEYS = {
+  id: 'last_photo_id',
+  createdAt: 'last_created_at',
+  imagePath: 'last_image_path',
+  caption: 'last_caption',
+  imageUrl: 'last_image_url', // optional helper for instant display
+} as const;
+
+const isProbablyUrl = (value: string) => /^https?:\/\//i.test(value);
+
+const readPhotoOfDayCache = (): PhotoOfDayItem | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const id = window.localStorage.getItem(PHOTO_OF_DAY_CACHE_KEYS.id) || '';
+    const createdAt = window.localStorage.getItem(PHOTO_OF_DAY_CACHE_KEYS.createdAt) || '';
+    const imagePath = window.localStorage.getItem(PHOTO_OF_DAY_CACHE_KEYS.imagePath) || '';
+    const caption = window.localStorage.getItem(PHOTO_OF_DAY_CACHE_KEYS.caption) || '';
+    const cachedUrl = window.localStorage.getItem(PHOTO_OF_DAY_CACHE_KEYS.imageUrl) || '';
+
+    if (!id || !createdAt) return null;
+    const url = cachedUrl || (isProbablyUrl(imagePath) ? imagePath : '');
+    if (!url) return null;
+
+    return {
+      id,
+      url,
+      date: formatShortDate(createdAt),
+      time: formatShortTime(createdAt),
+      description: caption || '',
+      createdAt,
+      imagePath: isProbablyUrl(imagePath) ? undefined : imagePath,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writePhotoOfDayCache = (item: PhotoOfDayItem) => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(PHOTO_OF_DAY_CACHE_KEYS.id, item.id);
+    window.localStorage.setItem(PHOTO_OF_DAY_CACHE_KEYS.createdAt, item.createdAt);
+    window.localStorage.setItem(PHOTO_OF_DAY_CACHE_KEYS.imagePath, item.imagePath || item.url);
+    window.localStorage.setItem(PHOTO_OF_DAY_CACHE_KEYS.caption, item.description || '');
+    if (item.url) {
+      window.localStorage.setItem(PHOTO_OF_DAY_CACHE_KEYS.imageUrl, item.url);
+    }
+  } catch {
+    // ignore cache write failures
+  }
+};
+
 type SupabaseError = { code?: string; message?: string; details?: string; hint?: string };
 
 const friendlySupabaseError = (err: unknown): string => {
@@ -899,7 +965,7 @@ export default function HomePage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [documentsOpen, setDocumentsOpen] = useState(false);
 
-  const [currentPhotoIndex, setCurrentPhotoIndex] = useState(() => photos.length - 1);
+  const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
   const [photoViewer, setPhotoViewer] = useState<PhotoViewerState>(null);
 
   const [commentsModalOpen, setCommentsModalOpen] = useState(false);
@@ -965,8 +1031,17 @@ export default function HomePage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const adminUserIdRef = useRef<string | null>(ADMIN_USER_ID);
   const [photoAboutOpen, setPhotoAboutOpen] = useState(false);
-  const [galleryPhotos, setGalleryPhotos] = useState<Photo[]>(() => [...photos].reverse());
+  const [photoOfDayLoading, setPhotoOfDayLoading] = useState(false);
+  const [photoOfDayHasMoreOlder, setPhotoOfDayHasMoreOlder] = useState(true);
+  const photoOfDayRequestIdRef = useRef(0);
+  const photoOfDayLoadingMoreRef = useRef(false);
+  const galleryPhotosRef = useRef<PhotoOfDayItem[]>([]);
+  const currentPhotoIndexRef = useRef(0);
+  const photoOfDayHasMoreOlderRef = useRef(true);
+
+  const [galleryPhotos, setGalleryPhotos] = useState<PhotoOfDayItem[]>([]);
   const [addPhotoDayOpen, setAddPhotoDayOpen] = useState(false);
+  const [photoOfDayPublishing, setPhotoOfDayPublishing] = useState(false);
   const [newPhotoDayFiles, setNewPhotoDayFiles] = useState<File[]>([]);
   const [newPhotoDayPreviews, setNewPhotoDayPreviews] = useState<string[]>([]);
   const [newPhotoDayDescs, setNewPhotoDayDescs] = useState<string[]>([]);
@@ -1375,13 +1450,43 @@ export default function HomePage() {
   const session = access.session;
   const user = session?.user;
 
+  useEffect(() => {
+    const cached = readPhotoOfDayCache();
+    if (!cached) return;
+    setGalleryPhotos([cached]);
+    setCurrentPhotoIndex(0);
+    setPhotoOfDayHasMoreOlder(true);
+  }, []);
+
+  useEffect(() => {
+    galleryPhotosRef.current = galleryPhotos;
+  }, [galleryPhotos]);
+
+  useEffect(() => {
+    currentPhotoIndexRef.current = currentPhotoIndex;
+  }, [currentPhotoIndex]);
+
+  useEffect(() => {
+    photoOfDayHasMoreOlderRef.current = photoOfDayHasMoreOlder;
+  }, [photoOfDayHasMoreOlder]);
+
+  useEffect(() => {
+    if (galleryPhotos.length === 0) {
+      if (currentPhotoIndex !== 0) setCurrentPhotoIndex(0);
+      return;
+    }
+    if (currentPhotoIndex > galleryPhotos.length - 1) {
+      setCurrentPhotoIndex(galleryPhotos.length - 1);
+    }
+  }, [currentPhotoIndex, galleryPhotos.length]);
+
   const touchStartX = useRef<number>(0);
   const touchEndX = useRef<number>(0);
   const touchStartY = useRef<number>(0);
   const pullDistanceRef = useRef(0);
   const lastTapTime = useRef<number>(0);
 
-  const currentPhoto = galleryPhotos[currentPhotoIndex];
+  const currentPhoto = galleryPhotos.length ? galleryPhotos[currentPhotoIndex] : null;
   const filteredMessages = feedMessages.filter(
     (m) => m.type !== 'sticker' && (!m.isTest || isAdmin), // hide test posts for non-admins
   );
@@ -1880,9 +1985,93 @@ export default function HomePage() {
     [showToast, loadPollDataForPosts],
   );
 
+  const mapPhotoOfDayRowsToItems = useCallback(async (rows: PhotoOfDayRow[]): Promise<PhotoOfDayItem[]> => {
+    const paths = rows.map((r) => r.image_path).filter(Boolean);
+    const urlMap = await resolvePathsToSignedUrls(paths, { bucket: MEDIA_BUCKET, preferSignedUrl: true });
+    return rows.map((row) => {
+      const url = urlMap.get(row.image_path) || row.image_path;
+      return {
+        id: row.id,
+        url,
+        date: formatShortDate(row.created_at),
+        time: formatShortTime(row.created_at),
+        description: row.caption || '',
+        createdAt: row.created_at,
+        imagePath: row.image_path,
+      };
+    });
+  }, []);
+
+  const refreshLatestPhotoOfDay = useCallback(
+    async (reason: 'initial' | 'manual' | 'open' = 'open') => {
+      const supabase = getSupabaseBrowserClient();
+      if (!supabase) {
+        // Dev fallback: keep mock photos available when Supabase is not configured.
+        const nowIso = new Date().toISOString();
+        setGalleryPhotos(photos.map((p) => ({ ...p, createdAt: nowIso })));
+        setCurrentPhotoIndex(0);
+        setPhotoOfDayHasMoreOlder(false);
+        return;
+      }
+
+      const requestId = ++photoOfDayRequestIdRef.current;
+      setPhotoOfDayLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from(PHOTO_OF_DAY_TABLE)
+          .select('id, created_at, image_path, caption, created_by')
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .limit(1);
+
+        if (requestId !== photoOfDayRequestIdRef.current) return;
+
+        if (error) {
+          console.error('[photo-of-day] Failed to load latest', error);
+          if (reason === 'manual') {
+            showToast(`Failed to refresh photo: ${friendlySupabaseError(error)}`);
+          }
+          return;
+        }
+
+        const rows = ((data as PhotoOfDayRow[]) || []).filter(Boolean);
+        if (rows.length === 0) {
+          setGalleryPhotos([]);
+          setCurrentPhotoIndex(0);
+          setPhotoOfDayHasMoreOlder(false);
+          return;
+        }
+
+        const items = await mapPhotoOfDayRowsToItems(rows);
+        if (requestId !== photoOfDayRequestIdRef.current) return;
+
+        const latest = items[0];
+        setGalleryPhotos([latest]);
+        setCurrentPhotoIndex(0);
+        setPhotoOfDayHasMoreOlder(true);
+        writePhotoOfDayCache(latest);
+      } catch (err) {
+        console.error('[photo-of-day] Unexpected error while loading latest', err);
+        if (reason === 'manual') {
+          showToast(`Failed to refresh photo: ${friendlySupabaseError(err)}`);
+        }
+      } finally {
+        if (requestId === photoOfDayRequestIdRef.current) {
+          setPhotoOfDayLoading(false);
+        }
+      }
+    },
+    [mapPhotoOfDayRowsToItems, showToast],
+  );
+
   useEffect(() => {
     refreshFeed('initial');
   }, [refreshFeed]);
+
+  useEffect(() => {
+    if (activeView !== 'home') return;
+    refreshLatestPhotoOfDay('open');
+  }, [activeView, refreshLatestPhotoOfDay]);
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
@@ -2192,17 +2381,149 @@ export default function HomePage() {
     requestAnimationFrame(performScroll);
   }, [activeView, feedItems.length, scheduleScrollStateCheck, scrollToBottomImmediate]);
 
-  const goToPrevPhoto = useCallback(() => {
-    if (currentPhotoIndex > 0) {
-      setCurrentPhotoIndex(currentPhotoIndex - 1);
-    }
-  }, [currentPhotoIndex]);
+  const fetchPhotoOfDayRows = useCallback(
+    async (params: { limit: number; beforeCreatedAt?: string | null }) => {
+      const supabase = getSupabaseBrowserClient();
+      if (!supabase) {
+        return { rows: [] as PhotoOfDayRow[], error: null as unknown };
+      }
 
-  const goToNextPhoto = useCallback(() => {
-    if (currentPhotoIndex < galleryPhotos.length - 1) {
-      setCurrentPhotoIndex(currentPhotoIndex + 1);
+      let query = supabase
+        .from(PHOTO_OF_DAY_TABLE)
+        .select('id, created_at, image_path, caption, created_by')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .limit(params.limit);
+
+      if (params.beforeCreatedAt) {
+        query = query.lt('created_at', params.beforeCreatedAt);
+      }
+
+      const { data, error } = await query;
+      return { rows: ((data as PhotoOfDayRow[]) || []).filter(Boolean), error };
+    },
+    [],
+  );
+
+  const loadNewestPhotoOfDayPage = useCallback(
+    async (options?: { advanceAfterLoad?: boolean }) => {
+      const supabase = getSupabaseBrowserClient();
+      if (!supabase) return;
+      if (photoOfDayLoadingMoreRef.current) return;
+      photoOfDayLoadingMoreRef.current = true;
+
+      const guardRequestId = photoOfDayRequestIdRef.current;
+      try {
+        const currentId = galleryPhotosRef.current[currentPhotoIndexRef.current]?.id || null;
+        const { rows, error } = await fetchPhotoOfDayRows({ limit: 7 });
+        if (guardRequestId !== photoOfDayRequestIdRef.current) return;
+        if (error) {
+          console.error('[photo-of-day] Failed to load first page', error);
+          return;
+        }
+
+        const items = await mapPhotoOfDayRowsToItems(rows);
+        if (guardRequestId !== photoOfDayRequestIdRef.current) return;
+
+        const seen = new Set<string>();
+        const deduped = items.filter((item) => {
+          if (seen.has(item.id)) return false;
+          seen.add(item.id);
+          return true;
+        });
+
+        const currentIndex = currentId ? deduped.findIndex((p) => p.id === currentId) : 0;
+        const baseIndex = currentIndex >= 0 ? currentIndex : 0;
+        const nextIndex = options?.advanceAfterLoad ? Math.min(baseIndex + 1, Math.max(deduped.length - 1, 0)) : baseIndex;
+
+        setGalleryPhotos(deduped);
+        setCurrentPhotoIndex(deduped.length ? nextIndex : 0);
+        setPhotoOfDayHasMoreOlder(deduped.length === 7);
+      } finally {
+        photoOfDayLoadingMoreRef.current = false;
+      }
+    },
+    [fetchPhotoOfDayRows, mapPhotoOfDayRowsToItems],
+  );
+
+  const loadMoreOlderPhotoOfDay = useCallback(
+    async (options?: { advanceAfterLoad?: boolean }) => {
+      const supabase = getSupabaseBrowserClient();
+      if (!supabase) return;
+      if (!photoOfDayHasMoreOlderRef.current) return;
+      if (photoOfDayLoadingMoreRef.current) return;
+      photoOfDayLoadingMoreRef.current = true;
+
+      const guardRequestId = photoOfDayRequestIdRef.current;
+      try {
+        const snapshot = galleryPhotosRef.current;
+        const currentIdx = currentPhotoIndexRef.current;
+        const oldest = snapshot[snapshot.length - 1];
+        const beforeCreatedAt = oldest?.createdAt || null;
+        if (!beforeCreatedAt) {
+          setPhotoOfDayHasMoreOlder(false);
+          return;
+        }
+
+        const { rows, error } = await fetchPhotoOfDayRows({ limit: 7, beforeCreatedAt });
+        if (guardRequestId !== photoOfDayRequestIdRef.current) return;
+        if (error) {
+          console.error('[photo-of-day] Failed to load older page', error);
+          return;
+        }
+
+        const items = await mapPhotoOfDayRowsToItems(rows);
+        if (guardRequestId !== photoOfDayRequestIdRef.current) return;
+
+        const existingIds = new Set(snapshot.map((p) => p.id));
+        const unique = items.filter((item) => !existingIds.has(item.id));
+        const nextPhotos = unique.length ? [...snapshot, ...unique] : snapshot;
+
+        setGalleryPhotos(nextPhotos);
+        if (unique.length === 0 || unique.length < 7) {
+          setPhotoOfDayHasMoreOlder(false);
+        } else {
+          setPhotoOfDayHasMoreOlder(true);
+        }
+
+        if (options?.advanceAfterLoad && unique.length > 0) {
+          setCurrentPhotoIndex(Math.min(currentIdx + 1, Math.max(nextPhotos.length - 1, 0)));
+        }
+      } finally {
+        photoOfDayLoadingMoreRef.current = false;
+      }
+    },
+    [fetchPhotoOfDayRows, mapPhotoOfDayRowsToItems],
+  );
+
+  const goToPrevPhoto = useCallback(() => {
+    if (galleryPhotosRef.current.length === 0) return;
+    setCurrentPhotoIndex((idx) => (idx > 0 ? idx - 1 : 0));
+  }, []);
+
+  const goToNextPhoto = useCallback(async () => {
+    const list = galleryPhotosRef.current;
+    if (list.length === 0) return;
+
+    const idx = currentPhotoIndexRef.current;
+    if (idx < list.length - 1) {
+      setCurrentPhotoIndex(idx + 1);
+      return;
     }
-  }, [currentPhotoIndex, galleryPhotos.length]);
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    if (!photoOfDayHasMoreOlderRef.current) return;
+
+    // First navigation: upgrade from a single latest photo to a 7-item page.
+    if (list.length < 7) {
+      await loadNewestPhotoOfDayPage({ advanceAfterLoad: true });
+      return;
+    }
+
+    // Reached the oldest loaded item: load 7 more older photos and advance.
+    await loadMoreOlderPhotoOfDay({ advanceAfterLoad: true });
+  }, [loadMoreOlderPhotoOfDay, loadNewestPhotoOfDayPage]);
 
   const openPhotoViewer = (
     images: string[],
@@ -2344,12 +2665,15 @@ export default function HomePage() {
       refreshFeed('pull');
     }
 
+    // No Photo of the Day loaded: disable horizontal navigation.
+    if (!currentPhoto) return;
+
     const diff = touchStartX.current - touchEndX.current;
     const threshold = 50;
 
     if (Math.abs(diff) > threshold) {
       if (diff > 0) {
-        goToNextPhoto();
+        void goToNextPhoto();
       } else {
         goToPrevPhoto();
       }
@@ -2378,6 +2702,7 @@ export default function HomePage() {
     ) {
       return;
     }
+    if (!currentPhoto) return;
     openPhotoOfDay(currentPhoto);
   };
 
@@ -2490,8 +2815,9 @@ export default function HomePage() {
   const handleManualRefresh = useCallback(() => {
     if (actionLock || loadingPostsRef.current) return;
     startActionLock();
+    void refreshLatestPhotoOfDay('manual');
     refreshFeed('manual');
-  }, [actionLock, refreshFeed, startActionLock]);
+  }, [actionLock, refreshFeed, refreshLatestPhotoOfDay, startActionLock]);
 
   const dismissInstallBanner = useCallback(() => {
     setShowInstallBanner(false);
@@ -3381,31 +3707,61 @@ export default function HomePage() {
     }
   };
 
-  const handleAddPhotoDaySave = () => {
+  const handleAddPhotoDaySave = async () => {
     if (!isAdmin) return;
     if (newPhotoDayFiles.length === 0) return;
-    const today = new Date();
-    const defaultDate = today.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    const defaultTime = today.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    const newPhotos: Photo[] = newPhotoDayFiles.map((file, i) => ({
-      id: `pd-${Date.now()}-${i}`,
-      url: newPhotoDayPreviews[i] || '',
-      date: newPhotoDayDates[i]?.trim() || defaultDate,
-      time: newPhotoDayTimes[i]?.trim() || defaultTime,
-      description: newPhotoDayDescs[i] || '',
-    }));
-    setGalleryPhotos((prev) => {
-      const next = [...prev, ...newPhotos];
-      setCurrentPhotoIndex(next.length - 1);
-      return next;
-    });
-    setAddPhotoDayOpen(false);
-    setNewPhotoDayFiles([]);
-    setNewPhotoDayPreviews([]);
-    setNewPhotoDayDescs([]);
-    setNewPhotoDayDates([]);
-    setNewPhotoDayTimes([]);
-    showToast(`${newPhotos.length} Photo(s) of the Day added (mock).`);
+    if (photoOfDayPublishing) return;
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      showToast('Supabase is not configured.');
+      return;
+    }
+
+    setPhotoOfDayPublishing(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id ?? null;
+      if (!userId) {
+        showToast('Please sign in to publish.');
+        return;
+      }
+
+      const uploads = await Promise.all(
+        newPhotoDayFiles.map((file) => uploadMedia(file, 'image', { bucket: MEDIA_BUCKET, preferSignedUrl: true })),
+      );
+      const insertRows = uploads.map((u, i) => ({
+        image_path: u.storagePath,
+        caption: (newPhotoDayDescs[i] || '').trim() || null,
+        created_by: userId,
+      }));
+
+      const { error: insertError } = await supabase.from(PHOTO_OF_DAY_TABLE).insert(insertRows);
+      if (insertError) {
+        // Best-effort cleanup of orphaned uploads when the DB insert fails.
+        try {
+          await supabase.storage.from(MEDIA_BUCKET).remove(uploads.map((u) => u.storagePath));
+        } catch {
+          // ignore cleanup failures
+        }
+        throw insertError;
+      }
+
+      setAddPhotoDayOpen(false);
+      setNewPhotoDayFiles([]);
+      setNewPhotoDayPreviews([]);
+      setNewPhotoDayDescs([]);
+      setNewPhotoDayDates([]);
+      setNewPhotoDayTimes([]);
+
+      showToast(`${insertRows.length} Photo(s) of the Day published.`);
+      await refreshLatestPhotoOfDay('manual');
+    } catch (err) {
+      console.error('[photo-of-day] Failed to publish', err);
+      showToast(`Failed to publish photo: ${friendlySupabaseError(err)}`);
+    } finally {
+      setPhotoOfDayPublishing(false);
+    }
   };
 
   const handleSendComment = async () => {
@@ -4396,7 +4752,9 @@ export default function HomePage() {
             onClick={handleFreeAreaClick}
           >
             <div className="fullscreen-bg">
-              <img src={currentPhoto.url} alt="Photo of the day" className="fullscreen-bg__image" />
+              {currentPhoto?.url ? (
+                <img src={currentPhoto.url} alt="Photo of the day" className="fullscreen-bg__image" />
+              ) : null}
               <div className="fullscreen-bg__overlay" />
             </div>
 
@@ -4411,13 +4769,28 @@ export default function HomePage() {
 
             <header className="photo-header">
               <div className="photo-header__nav">
-                {currentPhotoIndex > 0 && (
-                  <button className="photo-header__nav-btn" onClick={(e) => { e.stopPropagation(); goToPrevPhoto(); }}>
+                {Boolean(currentPhoto && currentPhotoIndex > 0) && (
+                  <button
+                    className="photo-header__nav-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      goToPrevPhoto();
+                    }}
+                  >
                     ‹
                   </button>
                 )}
-                {currentPhotoIndex < galleryPhotos.length - 1 && (
-                  <button className="photo-header__nav-btn" onClick={(e) => { e.stopPropagation(); goToNextPhoto(); }}>
+                {Boolean(
+                  currentPhoto &&
+                    (currentPhotoIndex < galleryPhotos.length - 1 || (photoOfDayHasMoreOlder && !photoOfDayLoading)),
+                ) && (
+                  <button
+                    className="photo-header__nav-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void goToNextPhoto();
+                    }}
+                  >
                     ›
                   </button>
                 )}
@@ -4425,13 +4798,21 @@ export default function HomePage() {
               <div className="photo-header__info">
                 <div className="photo-header__label-row">
                   <div className="photo-header__label">Photo of the day</div>
-                  {currentPhoto.description && (
-                    <button className="photo-header__about-chip" onClick={(e) => { e.stopPropagation(); setPhotoAboutOpen(true); }}>
+                  {currentPhoto?.description && (
+                    <button
+                      className="photo-header__about-chip"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPhotoAboutOpen(true);
+                      }}
+                    >
                       about
                     </button>
                   )}
                 </div>
-                <div className="photo-header__date">{currentPhoto.date} • {currentPhoto.time}</div>
+                <div className="photo-header__date">
+                  {currentPhoto ? `${currentPhoto.date} • ${currentPhoto.time}` : photoOfDayLoading ? 'Loading…' : 'No photo yet'}
+                </div>
               </div>
             </header>
 
@@ -5045,10 +5426,10 @@ export default function HomePage() {
                 <button
                   className="write-view__send"
                   style={{ marginTop: '16px' }}
-                  onClick={handleAddPhotoDaySave}
-                  disabled={newPhotoDayFiles.length === 0}
+                  onClick={() => void handleAddPhotoDaySave()}
+                  disabled={newPhotoDayFiles.length === 0 || photoOfDayPublishing}
                 >
-                  Publish {newPhotoDayFiles.length > 0 ? `(${newPhotoDayFiles.length})` : ''} (Mock)
+                  Publish {newPhotoDayFiles.length > 0 ? `(${newPhotoDayFiles.length})` : ''}
                 </button>
               </div>
             </div>
@@ -5157,7 +5538,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {photoAboutOpen && currentPhoto.description && (
+      {photoAboutOpen && currentPhoto?.description && (
         <div className="modal-overlay" onClick={() => setPhotoAboutOpen(false)}>
           <div className="modal about-modal" onClick={(e) => e.stopPropagation()}>
             <div className="about-modal__header">
@@ -5166,7 +5547,7 @@ export default function HomePage() {
                 {Icons.close}
               </button>
             </div>
-            <p className="about-modal__text">{currentPhoto.description}</p>
+            <p className="about-modal__text">{currentPhoto?.description}</p>
           </div>
         </div>
       )}
