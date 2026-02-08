@@ -327,7 +327,7 @@ const friendlySupabaseError = (err: unknown): string => {
   }
 
   if (code === '42P01' || message.includes('relation') || message.includes('table')) {
-    return 'Polls are not available yet. Please retry after a refresh.';
+    return 'Database table is not available yet. Please retry after a refresh.';
   }
 
   if (message.includes('duplicate') || code === '23505') {
