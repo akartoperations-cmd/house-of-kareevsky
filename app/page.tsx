@@ -315,6 +315,40 @@ const writePhotoOfDayCache = (item: PhotoOfDayItem) => {
   }
 };
 
+type FeedCacheV1 = {
+  v: 1;
+  savedAt: string;
+  messages: Message[];
+  commentsByPostId: Record<string, Comment[]>;
+  pagesLoaded: number;
+  hasMoreOlder: boolean;
+  oldestCursor: string | null;
+};
+
+const FEED_CACHE_KEY = 'feed_cache_v1';
+
+const readFeedCache = (): FeedCacheV1 | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(FEED_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as FeedCacheV1;
+    if (!parsed || parsed.v !== 1 || !Array.isArray(parsed.messages)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const writeFeedCache = (value: FeedCacheV1) => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(FEED_CACHE_KEY, JSON.stringify(value));
+  } catch {
+    // ignore cache write failures
+  }
+};
+
 type SupabaseError = { code?: string; message?: string; details?: string; hint?: string };
 
 const friendlySupabaseError = (err: unknown): string => {
@@ -1062,6 +1096,9 @@ export default function HomePage() {
   const [feedHasMoreOlder, setFeedHasMoreOlder] = useState(true);
   const [feedShowLoadMore, setFeedShowLoadMore] = useState(false);
   const [feedLoadingMore, setFeedLoadingMore] = useState(false);
+  const feedCacheRef = useRef<FeedCacheV1 | null>(null);
+  const feedMessagesRef = useRef<Message[]>([]);
+  const commentsByPostIdRef = useRef<Record<string, Comment[]>>({});
   const feedPagesLoadedRef = useRef(0);
   const feedAutoPagesLoadedRef = useRef(0);
   const feedHasMoreOlderRef = useRef(true);
@@ -1511,6 +1548,23 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
+    const cached = readFeedCache();
+    if (!cached || !cached.messages || cached.messages.length === 0) return;
+    feedCacheRef.current = cached;
+    setFeedMessages(cached.messages);
+    setCommentsByPostId(cached.commentsByPostId || {});
+    setPostsSource('supabase');
+    const pagesLoaded = Math.min(Math.max(cached.pagesLoaded || 1, 1), FEED_AUTO_PAGE_LIMIT);
+    feedPagesLoadedRef.current = pagesLoaded;
+    feedAutoPagesLoadedRef.current = pagesLoaded;
+    feedLoadedCursorsRef.current = new Set(['__first__']);
+    const oldestCursor = cached.oldestCursor || cached.messages[0]?.createdAt || null;
+    feedOldestCursorRef.current = oldestCursor;
+    setFeedHasMoreOlder(Boolean(cached.hasMoreOlder));
+    setFeedShowLoadMore(Boolean(cached.hasMoreOlder && pagesLoaded >= FEED_AUTO_PAGE_LIMIT));
+  }, [FEED_AUTO_PAGE_LIMIT]);
+
+  useEffect(() => {
     galleryPhotosRef.current = galleryPhotos;
   }, [galleryPhotos]);
 
@@ -1525,6 +1579,14 @@ export default function HomePage() {
   useEffect(() => {
     feedHasMoreOlderRef.current = feedHasMoreOlder;
   }, [feedHasMoreOlder]);
+
+  useEffect(() => {
+    feedMessagesRef.current = feedMessages;
+  }, [feedMessages]);
+
+  useEffect(() => {
+    commentsByPostIdRef.current = commentsByPostId;
+  }, [commentsByPostId]);
 
   useEffect(() => {
     if (galleryPhotos.length === 0) {
@@ -1577,6 +1639,50 @@ export default function HomePage() {
     setToastMessage(text);
     setTimeout(() => setToastMessage(null), timeoutMs);
   }, []);
+
+  const persistFeedCacheSnapshot = useCallback(
+    (override?: {
+      messages?: Message[];
+      commentsByPostId?: Record<string, Comment[]>;
+      pagesLoaded?: number;
+      hasMoreOlder?: boolean;
+    }) => {
+      const messagesSnapshot = override?.messages ?? feedMessagesRef.current;
+      if (!messagesSnapshot || messagesSnapshot.length === 0) return;
+
+      const maxMessages = FEED_PAGE_SIZE * FEED_AUTO_PAGE_LIMIT;
+      const trimmed = messagesSnapshot.slice(Math.max(0, messagesSnapshot.length - maxMessages));
+      const ids = new Set(trimmed.map((m) => m.id));
+
+      const commentsSnapshot = override?.commentsByPostId ?? commentsByPostIdRef.current;
+      const filteredComments: Record<string, Comment[]> = {};
+      Object.keys(commentsSnapshot || {}).forEach((postId) => {
+        if (!ids.has(postId)) return;
+        filteredComments[postId] = commentsSnapshot[postId];
+      });
+
+      const pagesLoaded = Math.min(
+        Math.max(override?.pagesLoaded ?? feedPagesLoadedRef.current ?? 1, 1),
+        FEED_AUTO_PAGE_LIMIT,
+        Math.max(1, Math.ceil(trimmed.length / FEED_PAGE_SIZE)),
+      );
+      const hasMoreOlder = override?.hasMoreOlder ?? feedHasMoreOlderRef.current;
+      const oldestCursor = trimmed[0]?.createdAt || null;
+
+      const cache: FeedCacheV1 = {
+        v: 1,
+        savedAt: new Date().toISOString(),
+        messages: trimmed,
+        commentsByPostId: filteredComments,
+        pagesLoaded,
+        hasMoreOlder: Boolean(hasMoreOlder),
+        oldestCursor,
+      };
+      feedCacheRef.current = cache;
+      writeFeedCache(cache);
+    },
+    [FEED_AUTO_PAGE_LIMIT, FEED_PAGE_SIZE],
+  );
 
   const canEditPost = useCallback(
     (message: Message) =>
@@ -2025,17 +2131,106 @@ export default function HomePage() {
               commentMap[row.id] = mappedComments;
             }
           });
+          const hasMore = mapped.length === FEED_PAGE_SIZE;
+
+          // Fast-start cache: keep cached pages when the newest page didn't change.
+          const cached = reason === 'initial' ? feedCacheRef.current : null;
+          const fetchedIdsKey = ascendingMessages.map((m) => m.id).join(',');
+          const cachedIdsKey = cached?.messages?.slice(-FEED_PAGE_SIZE).map((m) => m.id).join(',') || '';
+
+          if (cached && Array.isArray(cached.messages) && cached.messages.length > 0 && cachedIdsKey === fetchedIdsKey) {
+            setFeedMessages((prev) => (prev && prev.length > 0 ? prev : cached.messages));
+            setCommentsByPostId((prev) => ({ ...(cached.commentsByPostId || {}), ...prev, ...commentMap }));
+            setPostsSource('supabase');
+
+            const pagesLoaded = Math.min(Math.max(cached.pagesLoaded || 1, 1), FEED_AUTO_PAGE_LIMIT);
+            feedPagesLoadedRef.current = pagesLoaded;
+            feedAutoPagesLoadedRef.current = pagesLoaded;
+            feedLoadedCursorsRef.current = new Set(['__first__']);
+            feedOldestCursorRef.current = cached.oldestCursor || cached.messages[0]?.createdAt || null;
+
+            const effectiveHasMore = Boolean(cached.hasMoreOlder ?? hasMore);
+            setFeedHasMoreOlder(effectiveHasMore);
+            setFeedShowLoadMore(Boolean(effectiveHasMore && pagesLoaded >= FEED_AUTO_PAGE_LIMIT));
+            persistFeedCacheSnapshot({
+              messages: cached.messages,
+              commentsByPostId: { ...(cached.commentsByPostId || {}), ...commentMap },
+              pagesLoaded,
+              hasMoreOlder: effectiveHasMore,
+            });
+
+            console.info(`[data] Loaded ${ascendingMessages.length} posts from Supabase (page 1, cache hit)`);
+            if (reason !== 'initial') {
+              showToast('Feed updated');
+            }
+            return;
+          }
+
+          if (cached && Array.isArray(cached.messages) && cached.messages.length > 0) {
+            // Cache exists but newest page changed: keep up to 2 older cached pages when safe.
+            const cutoff = ascendingMessages[0]?.createdAt || null;
+            const maxOlder = FEED_PAGE_SIZE * Math.max(0, FEED_AUTO_PAGE_LIMIT - 1);
+            const keepOlder =
+              cutoff
+                ? cached.messages
+                    .filter((m) => Boolean(m.createdAt) && (m.createdAt as string) < cutoff)
+                    .slice(-maxOlder)
+                : [];
+
+            const combinedRaw = [...keepOlder, ...ascendingMessages];
+            const seen = new Set<string>();
+            const combined = combinedRaw.filter((m) => {
+              if (seen.has(m.id)) return false;
+              seen.add(m.id);
+              return true;
+            });
+
+            const mergedAll = { ...(cached.commentsByPostId || {}), ...commentMap };
+            const combinedIds = new Set(combined.map((m) => m.id));
+            const mergedComments: Record<string, Comment[]> = {};
+            Object.keys(mergedAll).forEach((id) => {
+              if (combinedIds.has(id)) mergedComments[id] = mergedAll[id];
+            });
+
+            setFeedMessages(combined);
+            setCommentsByPostId(mergedComments);
+            setPostsSource('supabase');
+
+            const pagesLoaded = Math.min(
+              FEED_AUTO_PAGE_LIMIT,
+              Math.max(1, Math.ceil(combined.length / FEED_PAGE_SIZE)),
+            );
+            feedPagesLoadedRef.current = pagesLoaded;
+            feedAutoPagesLoadedRef.current = pagesLoaded;
+            feedLoadedCursorsRef.current = new Set(['__first__']);
+            feedOldestCursorRef.current = combined[0]?.createdAt || null;
+
+            setFeedHasMoreOlder(hasMore);
+            setFeedShowLoadMore(Boolean(hasMore && pagesLoaded >= FEED_AUTO_PAGE_LIMIT));
+            persistFeedCacheSnapshot({
+              messages: combined,
+              commentsByPostId: mergedComments,
+              pagesLoaded,
+              hasMoreOlder: hasMore,
+            });
+
+            console.info(`[data] Loaded ${combined.length} posts from Supabase (page 1, cache merged)`);
+            if (reason !== 'initial') {
+              showToast('Feed updated');
+            }
+            return;
+          }
+
           setFeedMessages(ascendingMessages);
           setCommentsByPostId(commentMap);
           setPostsSource('supabase');
           feedPagesLoadedRef.current = 1;
           feedAutoPagesLoadedRef.current = 1;
           feedLoadedCursorsRef.current = new Set(['__first__']);
-          const oldest = ascendingMessages[0]?.createdAt || null;
-          feedOldestCursorRef.current = oldest;
-          const hasMore = mapped.length === FEED_PAGE_SIZE;
+          feedOldestCursorRef.current = ascendingMessages[0]?.createdAt || null;
           setFeedHasMoreOlder(hasMore);
           setFeedShowLoadMore(false);
+          persistFeedCacheSnapshot({ messages: ascendingMessages, commentsByPostId: commentMap, pagesLoaded: 1, hasMoreOlder: hasMore });
           console.info(`[data] Loaded ${ascendingMessages.length} posts from Supabase (page 1)`);
           if (reason !== 'initial') {
             showToast('Feed updated');
@@ -2050,7 +2245,7 @@ export default function HomePage() {
         }
       }
     },
-    [FEED_PAGE_SIZE, loadPollDataForPosts, showToast],
+    [FEED_AUTO_PAGE_LIMIT, FEED_PAGE_SIZE, loadPollDataForPosts, persistFeedCacheSnapshot, showToast],
   );
 
   const loadMoreFeedPosts = useCallback(
@@ -2068,7 +2263,7 @@ export default function HomePage() {
 
       const oldestCursor =
         feedOldestCursorRef.current ||
-        (feedMessages.length > 0 ? feedMessages[0]?.createdAt || null : null);
+        (feedMessagesRef.current.length > 0 ? feedMessagesRef.current[0]?.createdAt || null : null);
       if (!oldestCursor) {
         setFeedHasMoreOlder(false);
         return;
@@ -2143,28 +2338,24 @@ export default function HomePage() {
         const mapped = rowsWithUrls.map((row) => mapPostRowToMessage(row, adminUserIdRef.current, pollDataByPostId));
         const olderAscending = [...mapped].reverse();
 
-        // Prepend unique messages.
-        setFeedMessages((prev) => {
-          const existingIds = new Set(prev.map((m) => m.id));
-          const uniqueOlder = olderAscending.filter((m) => !existingIds.has(m.id));
-          const next = uniqueOlder.length ? [...uniqueOlder, ...prev] : prev;
-          feedOldestCursorRef.current = next[0]?.createdAt || feedOldestCursorRef.current;
-          return next;
-        });
+        const prevMessages = feedMessagesRef.current || [];
+        const existingIds = new Set(prevMessages.map((m) => m.id));
+        const uniqueOlder = olderAscending.filter((m) => !existingIds.has(m.id));
+        const nextMessages = uniqueOlder.length ? [...uniqueOlder, ...prevMessages] : prevMessages;
+        feedOldestCursorRef.current = nextMessages[0]?.createdAt || feedOldestCursorRef.current;
+        setFeedMessages(nextMessages);
 
-        // Merge comments for these posts only.
-        setCommentsByPostId((prev) => {
-          const next = { ...prev };
-          rowsWithUrls.forEach((row) => {
-            const mappedComments = (row.comments || [])
-              .filter((c) => !c.is_deleted)
-              .map((c) => mapCommentRow(c, adminUserIdRef.current));
-            if (mappedComments.length) {
-              next[row.id] = mappedComments;
-            }
-          });
-          return next;
+        const prevComments = commentsByPostIdRef.current || {};
+        const nextComments: Record<string, Comment[]> = { ...prevComments };
+        rowsWithUrls.forEach((row) => {
+          const mappedComments = (row.comments || [])
+            .filter((c) => !c.is_deleted)
+            .map((c) => mapCommentRow(c, adminUserIdRef.current));
+          if (mappedComments.length) {
+            nextComments[row.id] = mappedComments;
+          }
         });
+        setCommentsByPostId(nextComments);
 
         feedPagesLoadedRef.current += 1;
         if (mode === 'auto') {
@@ -2178,6 +2369,13 @@ export default function HomePage() {
         } else if (mode === 'auto' && feedPagesLoadedRef.current >= FEED_AUTO_PAGE_LIMIT) {
           setFeedShowLoadMore(true);
         }
+
+        persistFeedCacheSnapshot({
+          messages: nextMessages,
+          commentsByPostId: nextComments,
+          pagesLoaded: feedPagesLoadedRef.current,
+          hasMoreOlder: hasMore,
+        });
 
         // Preserve scroll position after prepending.
         if (preserveScroll && scrollTarget) {
@@ -2199,9 +2397,9 @@ export default function HomePage() {
     [
       FEED_AUTO_PAGE_LIMIT,
       FEED_PAGE_SIZE,
-      feedMessages,
       getScrollTarget,
       loadPollDataForPosts,
+      persistFeedCacheSnapshot,
       postsSource,
       showToast,
     ],
