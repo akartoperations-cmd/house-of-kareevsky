@@ -10,6 +10,12 @@
   }
 }
 
+/* Prevent browser pull-to-refresh / scroll chaining in PWA-like contexts */
+html,
+body {
+  overscroll-behavior-y: none;
+}
+
 /* 
   Intimate Artist SPA - Design System
   Mobile-first, warm, handwritten aesthetic

@@ -1596,7 +1596,18 @@ export default function HomePage() {
 
     if (feedEl) {
       const canScrollFeed = feedEl.scrollHeight - feedEl.clientHeight > 16;
-      if (canScrollFeed) return feedEl;
+      if (canScrollFeed) {
+        // Only treat the feed element as the scroll container when it is actually scrollable.
+        // Otherwise the document scrolls and attaching listeners to feedEl breaks pagination.
+        try {
+          const style = window.getComputedStyle(feedEl);
+          const overflowY = (style.overflowY || '').toLowerCase();
+          const isScrollable = overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay';
+          if (isScrollable) return feedEl;
+        } catch {
+          // If computed style fails, fall back to document scrolling.
+        }
+      }
     }
 
     return docTarget;
