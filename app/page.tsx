@@ -1246,10 +1246,9 @@ export default function HomePage() {
   const [newPhotoDayDates, setNewPhotoDayDates] = useState<string[]>([]);
   const [newPhotoDayTimes, setNewPhotoDayTimes] = useState<string[]>([]);
   const [feedMessages, setFeedMessages] = useState<Message[]>([]);
-  const FEED_PAGE_SIZE = 7;
-  const FEED_AUTO_PAGE_LIMIT = 3;
+  const FEED_PAGE_SIZE = 10;
+  const FEED_CACHE_MAX = 50; // max posts to persist in localStorage cache
   const [feedHasMoreOlder, setFeedHasMoreOlder] = useState(true);
-  const [feedShowLoadMore, setFeedShowLoadMore] = useState(false);
   const [feedLoadingMore, setFeedLoadingMore] = useState(false);
   const feedCacheRef = useRef<FeedCacheV1 | null>(null);
   const feedMessagesRef = useRef<Message[]>([]);
@@ -1666,22 +1665,17 @@ export default function HomePage() {
       const target = getScrollTarget();
       if (!target) return;
       const scrollTop = target.scrollTop;
-      const nearTop = scrollTop <= 120;
+      // Trigger auto-load when user scrolls close to the top (older posts).
+      const nearTop = scrollTop <= 200;
       if (!nearTop) return;
 
-      // Only auto-load up to 3 pages. After that, show the button.
-      if (feedPagesLoadedRef.current >= FEED_AUTO_PAGE_LIMIT) {
-        setFeedShowLoadMore(true);
-        return;
-      }
-
       const now = Date.now();
-      if (now - feedLastAutoLoadAtRef.current < 1200) return;
+      if (now - feedLastAutoLoadAtRef.current < 800) return;
       feedLastAutoLoadAtRef.current = now;
 
       void loadMoreFeedPostsRef.current?.('auto');
     });
-  }, [FEED_AUTO_PAGE_LIMIT, activeView, getScrollTarget, postsSource]);
+  }, [activeView, getScrollTarget, postsSource]);
 
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto') => {
@@ -1722,15 +1716,14 @@ export default function HomePage() {
     setFeedMessages(cached.messages);
     setCommentsByPostId(cached.commentsByPostId || {});
     setPostsSource('supabase');
-    const pagesLoaded = Math.min(Math.max(cached.pagesLoaded || 1, 1), FEED_AUTO_PAGE_LIMIT);
+    const pagesLoaded = Math.max(cached.pagesLoaded || 1, 1);
     feedPagesLoadedRef.current = pagesLoaded;
     feedAutoPagesLoadedRef.current = pagesLoaded;
     feedLoadedCursorsRef.current = new Set(['__first__']);
     const oldestCursor = cached.oldestCursor || cached.messages[0]?.createdAt || null;
     feedOldestCursorRef.current = oldestCursor;
     setFeedHasMoreOlder(Boolean(cached.hasMoreOlder));
-    setFeedShowLoadMore(Boolean(cached.hasMoreOlder && pagesLoaded >= FEED_AUTO_PAGE_LIMIT));
-  }, [FEED_AUTO_PAGE_LIMIT]);
+  }, []);
 
   useEffect(() => {
     galleryPhotosRef.current = galleryPhotos;
@@ -1818,8 +1811,8 @@ export default function HomePage() {
       const messagesSnapshot = override?.messages ?? feedMessagesRef.current;
       if (!messagesSnapshot || messagesSnapshot.length === 0) return;
 
-      const maxMessages = FEED_PAGE_SIZE * FEED_AUTO_PAGE_LIMIT;
-      const trimmed = messagesSnapshot.slice(Math.max(0, messagesSnapshot.length - maxMessages));
+      // For localStorage, keep only the newest FEED_CACHE_MAX posts (older ones will be re-fetched on scroll).
+      const trimmed = messagesSnapshot.slice(Math.max(0, messagesSnapshot.length - FEED_CACHE_MAX));
       const ids = new Set(trimmed.map((m) => m.id));
 
       const commentsSnapshot = override?.commentsByPostId ?? commentsByPostIdRef.current;
@@ -1829,11 +1822,7 @@ export default function HomePage() {
         filteredComments[postId] = commentsSnapshot[postId];
       });
 
-      const pagesLoaded = Math.min(
-        Math.max(override?.pagesLoaded ?? feedPagesLoadedRef.current ?? 1, 1),
-        FEED_AUTO_PAGE_LIMIT,
-        Math.max(1, Math.ceil(trimmed.length / FEED_PAGE_SIZE)),
-      );
+      const pagesLoaded = Math.max(override?.pagesLoaded ?? feedPagesLoadedRef.current ?? 1, 1);
       const hasMoreOlder = override?.hasMoreOlder ?? feedHasMoreOlderRef.current;
       const oldestCursor = trimmed[0]?.createdAt || null;
 
@@ -1849,7 +1838,7 @@ export default function HomePage() {
       feedCacheRef.current = cache;
       writeFeedCache(cache);
     },
-    [FEED_AUTO_PAGE_LIMIT, FEED_PAGE_SIZE],
+    [FEED_CACHE_MAX],
   );
 
   const canEditPost = useCallback(
@@ -2311,7 +2300,7 @@ export default function HomePage() {
             setCommentsByPostId((prev) => ({ ...(cached.commentsByPostId || {}), ...prev, ...commentMap }));
             setPostsSource('supabase');
 
-            const pagesLoaded = Math.min(Math.max(cached.pagesLoaded || 1, 1), FEED_AUTO_PAGE_LIMIT);
+            const pagesLoaded = Math.max(cached.pagesLoaded || 1, 1);
             feedPagesLoadedRef.current = pagesLoaded;
             feedAutoPagesLoadedRef.current = pagesLoaded;
             feedLoadedCursorsRef.current = new Set(['__first__']);
@@ -2319,7 +2308,6 @@ export default function HomePage() {
 
             const effectiveHasMore = Boolean(cached.hasMoreOlder ?? hasMore);
             setFeedHasMoreOlder(effectiveHasMore);
-            setFeedShowLoadMore(Boolean(effectiveHasMore && pagesLoaded >= FEED_AUTO_PAGE_LIMIT));
             persistFeedCacheSnapshot({
               messages: cached.messages,
               commentsByPostId: { ...(cached.commentsByPostId || {}), ...commentMap },
@@ -2335,14 +2323,12 @@ export default function HomePage() {
           }
 
           if (cached && Array.isArray(cached.messages) && cached.messages.length > 0) {
-            // Cache exists but newest page changed: keep up to 2 older cached pages when safe.
+            // Cache exists but newest page changed: keep all older cached posts.
             const cutoff = ascendingMessages[0]?.createdAt || null;
-            const maxOlder = FEED_PAGE_SIZE * Math.max(0, FEED_AUTO_PAGE_LIMIT - 1);
             const keepOlder =
               cutoff
                 ? cached.messages
                     .filter((m) => Boolean(m.createdAt) && (m.createdAt as string) < cutoff)
-                    .slice(-maxOlder)
                 : [];
 
             const combinedRaw = [...keepOlder, ...ascendingMessages];
@@ -2364,17 +2350,13 @@ export default function HomePage() {
             setCommentsByPostId(mergedComments);
             setPostsSource('supabase');
 
-            const pagesLoaded = Math.min(
-              FEED_AUTO_PAGE_LIMIT,
-              Math.max(1, Math.ceil(combined.length / FEED_PAGE_SIZE)),
-            );
+            const pagesLoaded = Math.max(1, Math.ceil(combined.length / FEED_PAGE_SIZE));
             feedPagesLoadedRef.current = pagesLoaded;
             feedAutoPagesLoadedRef.current = pagesLoaded;
             feedLoadedCursorsRef.current = new Set(['__first__']);
             feedOldestCursorRef.current = combined[0]?.createdAt || null;
 
             setFeedHasMoreOlder(hasMore);
-            setFeedShowLoadMore(Boolean(hasMore && pagesLoaded >= FEED_AUTO_PAGE_LIMIT));
             persistFeedCacheSnapshot({
               messages: combined,
               commentsByPostId: mergedComments,
@@ -2397,7 +2379,6 @@ export default function HomePage() {
           feedLoadedCursorsRef.current = new Set(['__first__']);
           feedOldestCursorRef.current = ascendingMessages[0]?.createdAt || null;
           setFeedHasMoreOlder(hasMore);
-          setFeedShowLoadMore(false);
           persistFeedCacheSnapshot({ messages: ascendingMessages, commentsByPostId: commentMap, pagesLoaded: 1, hasMoreOlder: hasMore });
           console.info(`[data] Loaded ${ascendingMessages.length} posts from Supabase (page 1)`);
           if (reason !== 'initial') {
@@ -2413,7 +2394,7 @@ export default function HomePage() {
         }
       }
     },
-    [FEED_AUTO_PAGE_LIMIT, FEED_PAGE_SIZE, loadPollDataForPosts, persistFeedCacheSnapshot, showToast],
+    [FEED_PAGE_SIZE, loadPollDataForPosts, persistFeedCacheSnapshot, showToast],
   );
 
   const loadMoreFeedPosts = useCallback(
@@ -2422,12 +2403,6 @@ export default function HomePage() {
       if (!supabase || postsSource !== 'supabase') return;
       if (!feedHasMoreOlderRef.current) return;
       if (feedLoadingMoreRef.current || loadingPostsRef.current) return;
-
-      // Auto-loading is capped to the first 3 pages (21 posts).
-      if (mode === 'auto' && feedPagesLoadedRef.current >= FEED_AUTO_PAGE_LIMIT) {
-        setFeedShowLoadMore(true);
-        return;
-      }
 
       const oldestCursor =
         feedOldestCursorRef.current ||
@@ -2532,11 +2507,6 @@ export default function HomePage() {
 
         const hasMore = mapped.length === FEED_PAGE_SIZE;
         setFeedHasMoreOlder(hasMore);
-        if (!hasMore) {
-          setFeedShowLoadMore(false);
-        } else if (mode === 'auto' && feedPagesLoadedRef.current >= FEED_AUTO_PAGE_LIMIT) {
-          setFeedShowLoadMore(true);
-        }
 
         persistFeedCacheSnapshot({
           messages: nextMessages,
@@ -2563,7 +2533,6 @@ export default function HomePage() {
       }
     },
     [
-      FEED_AUTO_PAGE_LIMIT,
       FEED_PAGE_SIZE,
       getScrollTarget,
       loadPollDataForPosts,
@@ -2577,14 +2546,13 @@ export default function HomePage() {
     loadMoreFeedPostsRef.current = loadMoreFeedPosts;
   }, [loadMoreFeedPosts]);
 
-  // If the first page doesn't create a scrollable area (e.g. only a few short posts),
-  // auto-load older pages up to the auto limit so the user can naturally scroll upwards.
+  // If the visible area is not fully scrollable yet (e.g. only a few short posts),
+  // auto-load one more page so the user can naturally scroll upwards.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (activeView !== 'home') return;
     if (postsSource !== 'supabase') return;
     if (!feedHasMoreOlderRef.current) return;
-    if (feedPagesLoadedRef.current >= FEED_AUTO_PAGE_LIMIT) return;
     if (feedLoadingMoreRef.current || loadingPostsRef.current) return;
     if (!feedMessagesRef.current || feedMessagesRef.current.length === 0) return;
 
@@ -2599,7 +2567,7 @@ export default function HomePage() {
     feedLastAutoLoadAtRef.current = now;
 
     void loadMoreFeedPostsRef.current?.('auto');
-  }, [FEED_AUTO_PAGE_LIMIT, activeView, getScrollTarget, postsSource, feedHasMoreOlder, feedMessages.length]);
+  }, [activeView, getScrollTarget, postsSource, feedHasMoreOlder, feedMessages.length]);
 
   const mapPhotoOfDayRowsToItems = useCallback(async (rows: PhotoOfDayRow[]): Promise<PhotoOfDayItem[]> => {
     const paths = rows.map((r) => r.image_path).filter(Boolean);
@@ -5574,20 +5542,18 @@ export default function HomePage() {
 
             {/* Feed without date dividers - date shown in each message's meta */}
             <div className="feed feed--overlay" ref={feedScrollContainerRef}>
-              {feedShowLoadMore && feedHasMoreOlder && (
+              {feedLoadingMore && (
                 <div
-                  style={{ padding: '10px 0', textAlign: 'center' }}
-                  onClick={(e) => e.stopPropagation()}
-                  onPointerDown={(e) => e.stopPropagation()}
+                  style={{ padding: '12px 0', textAlign: 'center', opacity: 0.6, fontSize: '13px' }}
                 >
-                  <button
-                    type="button"
-                    className="inline-btn inline-btn--ghost"
-                    onClick={() => void loadMoreFeedPosts('manual')}
-                    disabled={feedLoadingMore}
-                  >
-                    {feedLoadingMore ? 'Loading…' : 'Load more'}
-                  </button>
+                  Loading…
+                </div>
+              )}
+              {!feedHasMoreOlder && feedMessages.length > 0 && (
+                <div
+                  style={{ padding: '12px 0', textAlign: 'center', opacity: 0.4, fontSize: '12px' }}
+                >
+                  All posts loaded
                 </div>
               )}
               {feedItems.map((item) => {
