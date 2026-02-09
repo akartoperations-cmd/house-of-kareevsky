@@ -1263,6 +1263,7 @@ export default function HomePage() {
   const feedPaginationRafRef = useRef<number | null>(null);
   const feedLastAutoLoadAtRef = useRef(0);
   const loadMoreFeedPostsRef = useRef<((mode: 'auto' | 'manual') => Promise<void>) | null>(null);
+  const feedPullLoadTriggeredRef = useRef(false);
   const [postsSource, setPostsSource] = useState<'supabase' | 'mock' | 'uninitialized'>('uninitialized');
   const [loadingPosts, setLoadingPosts] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
@@ -2576,6 +2577,30 @@ export default function HomePage() {
     loadMoreFeedPostsRef.current = loadMoreFeedPosts;
   }, [loadMoreFeedPosts]);
 
+  // If the first page doesn't create a scrollable area (e.g. only a few short posts),
+  // auto-load older pages up to the auto limit so the user can naturally scroll upwards.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (activeView !== 'home') return;
+    if (postsSource !== 'supabase') return;
+    if (!feedHasMoreOlderRef.current) return;
+    if (feedPagesLoadedRef.current >= FEED_AUTO_PAGE_LIMIT) return;
+    if (feedLoadingMoreRef.current || loadingPostsRef.current) return;
+    if (!feedMessagesRef.current || feedMessagesRef.current.length === 0) return;
+
+    const target = getScrollTarget();
+    if (!target) return;
+
+    const scrollable = target.scrollHeight - target.clientHeight > 16;
+    if (scrollable) return;
+
+    const now = Date.now();
+    if (now - feedLastAutoLoadAtRef.current < 1200) return;
+    feedLastAutoLoadAtRef.current = now;
+
+    void loadMoreFeedPostsRef.current?.('auto');
+  }, [FEED_AUTO_PAGE_LIMIT, activeView, getScrollTarget, postsSource, feedHasMoreOlder, feedMessages.length]);
+
   const mapPhotoOfDayRowsToItems = useCallback(async (rows: PhotoOfDayRow[]): Promise<PhotoOfDayItem[]> => {
     const paths = rows.map((r) => r.image_path).filter(Boolean);
     const urlMap = await resolvePathsToSignedUrls(paths, { bucket: MEDIA_BUCKET, preferSignedUrl: true });
@@ -3256,6 +3281,7 @@ export default function HomePage() {
     touchStartY.current = touch.clientY;
     pullDistanceRef.current = 0;
     setPullDistance(0);
+    feedPullLoadTriggeredRef.current = false;
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
@@ -3280,6 +3306,11 @@ export default function HomePage() {
     // In the Supabase feed we use "scroll to top" to paginate older posts.
     // Disable pull-to-refresh gesture to avoid accidentally resetting the feed back to page 1.
     if (activeView === 'home' && postsSource === 'supabase') {
+      // If the user pulls down at the very top, treat it as "load older posts" (not refresh).
+      if (!feedPullLoadTriggeredRef.current && deltaY > 28) {
+        feedPullLoadTriggeredRef.current = true;
+        void loadMoreFeedPostsRef.current?.('auto');
+      }
       if (pullDistanceRef.current !== 0) {
         pullDistanceRef.current = 0;
         setPullDistance(0);
