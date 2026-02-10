@@ -2985,13 +2985,18 @@ export default function HomePage() {
   useEffect(() => {
     if (activeView !== 'home') return;
 
+    // Initial scroll: wait until feed items are actually rendered before scrolling to bottom.
     if (!didInitialScroll.current) {
+      if (feedItems.length === 0) return; // not ready yet — wait for data
       didInitialScroll.current = true;
       pendingScrollToBottom.current = false;
       forceScrollToBottom.current = false;
+      // Double-rAF ensures the browser has laid out the new items before we scroll.
       requestAnimationFrame(() => {
-        scrollToBottomImmediate();
-        scheduleScrollStateCheck();
+        requestAnimationFrame(() => {
+          scrollToBottomImmediate();
+          scheduleScrollStateCheck();
+        });
       });
       return;
     }
