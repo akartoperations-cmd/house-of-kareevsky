@@ -1,12 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAccessRedirect } from '@/app/lib/useAccessRedirect';
 
 type Status = { type: 'success' | 'error'; message: string } | null;
 
 const checkoutUrl = process.env.NEXT_PUBLIC_DIGISTORE24_CHECKOUT_URL || '';
+const lastEmailStorageKey = 'kareevsky_last_email';
 
 export default function ThankYouPage() {
   const access = useAccessRedirect('welcome');
@@ -15,6 +16,17 @@ export default function ThankYouPage() {
   const [sending, setSending] = useState(false);
 
   const checkoutConfigured = Boolean(checkoutUrl);
+
+  useEffect(() => {
+    // Soft-restore the last typed email after refresh.
+    if (email) return;
+    try {
+      const saved = window.localStorage.getItem(lastEmailStorageKey);
+      if (saved) setEmail(saved);
+    } catch {
+      // ignore storage errors (e.g., private mode)
+    }
+  }, [email]);
 
   const enterCta = useMemo(() => {
     return {
@@ -60,6 +72,11 @@ export default function ThankYouPage() {
         type: 'success',
         message: data?.message || 'Check your email for your access link.',
       });
+      try {
+        window.localStorage.removeItem(lastEmailStorageKey);
+      } catch {
+        // ignore storage errors
+      }
       setEmail('');
     } catch {
       setStatus({ type: 'error', message: 'Unable to verify access right now.' });
@@ -113,8 +130,19 @@ export default function ThankYouPage() {
               type="email"
               inputMode="email"
               autoComplete="email"
+              autoCapitalize="none"
+              spellCheck={false}
+              enterKeyHint="done"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setEmail(next);
+                try {
+                  window.localStorage.setItem(lastEmailStorageKey, next);
+                } catch {
+                  // ignore storage errors
+                }
+              }}
               className="welcome-input"
               placeholder="you@example.com"
               required
