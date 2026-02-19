@@ -8,6 +8,9 @@ type FormDataMap = Record<string, string>;
 
 const parseEmail = (value: unknown) => (typeof value === 'string' ? value : '').trim().toLowerCase();
 
+const text = (status: number, body: string) =>
+  new NextResponse(body, { status, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+
 const firstString = (obj: FormDataMap, keys: string[]) => {
   for (const k of keys) {
     const v = obj[k];
@@ -27,6 +30,11 @@ const mapStatus = (raw: string): string => {
 };
 
 const shaPrefix = (value: string): string => (value || '').slice(0, 6);
+
+const sha256Prefix = (value: string): string => {
+  if (!value) return '';
+  return crypto.createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 10);
+};
 
 const timingSafeEqualStr = (a: string, b: string) => {
   const aBuf = Buffer.from(a);
@@ -78,52 +86,32 @@ export async function POST(request: Request) {
   const expectedSha = passphrase ? computeDigistoreShaSign(data, passphrase) : '';
 
   const keys = Object.keys(data).sort();
-  let reason = 'ok';
-
-  // connection_test всегда OK, даже если подпись отключена/невалидна.
-  if (isConnectionTest) {
-    reason = 'connection_test';
-    console.log('[digistore24]', {
-      event,
-      api_mode: apiMode,
-      keys,
-      received_sha_sign: shaPrefix(receivedSha),
-      expected_sha_sign: shaPrefix(expectedSha),
-      reason,
-    });
-    return new NextResponse('OK', { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } });
-  }
 
   if (!passphrase) {
-    reason = 'missing_passphrase';
-    console.log('[digistore24]', {
+    console.warn('[digistore24]', {
       event,
       api_mode: apiMode,
       keys,
       received_sha_sign: shaPrefix(receivedSha),
       expected_sha_sign: shaPrefix(expectedSha),
-      reason,
+      reason: 'missing_passphrase',
     });
-    return new NextResponse('missing passphrase', { status: 401, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+    return text(401, 'missing passphrase');
   }
 
   const receivedNorm = receivedSha.trim().toUpperCase();
   const expectedNorm = expectedSha.trim().toUpperCase();
   const ok = Boolean(receivedNorm) && timingSafeEqualStr(receivedNorm, expectedNorm);
   if (!ok) {
-    reason = 'invalid_signature';
-    console.log('[digistore24]', {
+    console.warn('[digistore24]', {
       event,
       api_mode: apiMode,
       keys,
       received_sha_sign: shaPrefix(receivedNorm),
       expected_sha_sign: shaPrefix(expectedNorm),
-      reason,
+      reason: 'invalid_signature',
     });
-    return new NextResponse('ERROR: invalid sha signature', {
-      status: 401,
-      headers: { 'content-type': 'text/plain; charset=utf-8' },
-    });
+    return text(401, 'ERROR: invalid sha signature');
   }
 
   console.log('[digistore24]', {
@@ -132,7 +120,7 @@ export async function POST(request: Request) {
     keys,
     received_sha_sign: shaPrefix(receivedNorm),
     expected_sha_sign: shaPrefix(expectedNorm),
-    reason,
+    reason: isConnectionTest ? 'connection_test' : 'ok',
   });
 
   const email = parseEmail(
@@ -151,38 +139,51 @@ export async function POST(request: Request) {
   const productId = firstString(data, ['product_id', 'productId']);
   const eventType = firstString(data, ['event', 'event_type', 'type', 'status', 'payment_status', 'order_status']);
 
-  // Signature is valid. Process best-effort, without impacting the response body.
+  // connection_test should validate signature, but never write to the database.
+  if (isConnectionTest) {
+    return text(200, 'OK');
+  }
+
+  if (!email) {
+    console.warn('[digistore24] missing email; skipping write', { event, api_mode: apiMode, keys, order_id: orderId || null });
+    return text(422, 'missing email');
+  }
+
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) {
+    console.error('[digistore24] service role not configured; cannot write subscription', {
+      event,
+      api_mode: apiMode,
+      keys,
+      email_sha256: sha256Prefix(email),
+      order_id: orderId || null,
+    });
+    return text(503, 'service not configured');
+  }
+
+  const status = mapStatus(eventType);
+
+  // Bind user_id if the user already exists in auth.users.
+  let userId: string | null = null;
   try {
-    if (!email) {
-      return new NextResponse('OK', { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } });
-    }
+    const { data: userRows } = await supabase.schema('auth').from('users').select('id').eq('email', email).limit(1);
+    userId = (Array.isArray(userRows) && userRows.length > 0 ? (userRows[0] as { id?: string }).id : null) || null;
+  } catch (err) {
+    console.warn('[digistore24] user lookup failed (continuing)', { email_sha256: sha256Prefix(email) });
+  }
 
-    const supabase = getSupabaseServiceClient();
-    if (!supabase) {
-      return new NextResponse('OK', { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } });
-    }
+  const nowIso = new Date().toISOString();
+  const baseUpdate = {
+    email,
+    user_id: userId,
+    status,
+    digistore_order_id: orderId || null,
+    digistore_product_id: productId || null,
+    raw_event: data,
+    last_event_at: nowIso,
+  };
 
-    const status = mapStatus(eventType);
-
-    // Bind user_id if the user already exists in auth.users.
-    let userId: string | null = null;
-    try {
-      const { data: userRows } = await supabase.schema('auth').from('users').select('id').eq('email', email).limit(1);
-      userId = (Array.isArray(userRows) && userRows.length > 0 ? (userRows[0] as { id?: string }).id : null) || null;
-    } catch (err) {
-    }
-
-    const nowIso = new Date().toISOString();
-    const baseUpdate = {
-      email,
-      user_id: userId,
-      status,
-      digistore_order_id: orderId || null,
-      digistore_product_id: productId || null,
-      raw_event: data,
-      last_event_at: nowIso,
-    };
-
+  try {
     if (orderId) {
       const existing = await supabase
         .from('subscriptions')
@@ -238,7 +239,16 @@ export async function POST(request: Request) {
       }
     }
   } catch (err) {
+    console.error('[digistore24] write failed', {
+      event,
+      api_mode: apiMode,
+      email_sha256: sha256Prefix(email),
+      order_id: orderId || null,
+      product_id: productId || null,
+      status,
+    });
+    return text(500, 'write failed');
   }
 
-  return new NextResponse('OK', { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+  return text(200, 'OK');
 }
