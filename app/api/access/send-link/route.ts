@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { isAdminEmailServer, normalizeEmail } from '@/app/lib/access';
+import { normalizeEmail } from '@/app/lib/access';
+import { isAdminEmailServer } from '@/app/lib/admin.server';
 import { getSupabaseServerClient } from '@/app/lib/supabaseServerClient';
 import { getSupabaseServiceClient } from '@/app/lib/supabaseServiceClient';
 
