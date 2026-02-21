@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { isAdminEmail, normalizeEmail } from '@/app/lib/access';
+import { isAdminEmailServer, normalizeEmail } from '@/app/lib/access';
 import { getSupabaseServerClient } from '@/app/lib/supabaseServerClient';
 import { getSupabaseServiceClient } from '@/app/lib/supabaseServiceClient';
 
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
     // Access is granted by:
     // - ADMIN_EMAIL, or
     // - public.subscriptions where status = 'active' for this email.
-    const isAdmin = isAdminEmail(email);
+    const isAdmin = isAdminEmailServer(email);
     if (!isAdmin) {
       const dataClient = getSupabaseServiceClient();
       if (!dataClient) {

@@ -1,7 +1,7 @@
 const normalizeEmail = (value: unknown): string => (typeof value === 'string' ? value : '').trim().toLowerCase();
 
-const parseAdminEmail = (): string =>
-  (process.env.ADMIN_EMAIL || process.env.NEXT_PUBLIC_ADMIN_EMAIL || '').trim().toLowerCase();
+const parseAdminEmailServer = (): string => (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+const parseAdminEmailClient = (): string => (process.env.NEXT_PUBLIC_ADMIN_EMAIL || '').trim().toLowerCase();
 
 const parseAllowlist = (): string[] =>
   (process.env.ACCESS_ALLOWLIST_EMAILS || '')
@@ -10,11 +10,24 @@ const parseAllowlist = (): string[] =>
     .filter(Boolean);
 
 /**
- * Check if email is the configured admin.
+ * Server-only admin check.
+ * - Only `ADMIN_EMAIL` grants admin rights.
+ * - `NEXT_PUBLIC_*` must never affect server authorization.
  */
-const isAdminEmail = (email: string): boolean => {
+const isAdminEmailServer = (email: string | null | undefined): boolean => {
+  if (typeof window !== 'undefined') return false;
+  const adminEmail = parseAdminEmailServer();
+  if (!adminEmail) return false;
+  const normalized = (email || '').trim().toLowerCase();
+  return normalized === adminEmail;
+};
+
+/**
+ * Client-side helper for UI hints only.
+ */
+const isAdminEmailClient = (email: string): boolean => {
   const normalized = normalizeEmail(email);
-  const adminEmail = parseAdminEmail();
+  const adminEmail = parseAdminEmailClient();
   return Boolean(adminEmail) && normalized === adminEmail;
 };
 
@@ -28,7 +41,7 @@ const isEmailEligible = (email: string): boolean => {
   if (!normalized) return false;
 
   // Admin is always eligible
-  if (isAdminEmail(normalized)) return true;
+  if (isAdminEmailServer(normalized)) return true;
 
   const allowlist = parseAllowlist();
   if (allowlist.length === 0) return false;
@@ -36,5 +49,5 @@ const isEmailEligible = (email: string): boolean => {
   return allowlist.includes(normalized);
 };
 
-export { isEmailEligible, isAdminEmail, normalizeEmail, parseAllowlist };
+export { isAdminEmailServer, isAdminEmailClient, isEmailEligible, normalizeEmail, parseAllowlist };
 

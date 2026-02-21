@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { isAdminEmailServer, normalizeEmail } from '@/app/lib/access';
 import { getSupabaseServiceClient } from '@/app/lib/supabaseServiceClient';
 
 export const runtime = 'nodejs';
@@ -10,17 +11,14 @@ type AccessStatusResponse = {
   reason?: string;
 };
 
-const parseEmail = (value: unknown) => (typeof value === 'string' ? value : '').trim().toLowerCase();
 const parseUserId = (value: unknown) => (typeof value === 'string' ? value : '').trim();
-
-const adminEmail = () => (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
 
 export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
-  const email = parseEmail((body as { email?: unknown }).email);
+  const email = normalizeEmail((body as { email?: unknown }).email);
   const userId = parseUserId((body as { userId?: unknown }).userId);
 
-  const isAdmin = Boolean(adminEmail()) && email === adminEmail();
+  const isAdmin = isAdminEmailServer(email);
   if (isAdmin) {
     const payload: AccessStatusResponse = { ok: true, isAdmin: true, active: true };
     return NextResponse.json(payload);

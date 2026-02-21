@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { isAdminEmailServer, normalizeEmail } from '@/app/lib/access';
 
 export const runtime = 'nodejs';
 
@@ -8,18 +9,14 @@ type AdminStatusResponse = {
   isAdmin: boolean;
 };
 
-const parseAdminEmail = () =>
-  (process.env.ADMIN_EMAIL || process.env.NEXT_PUBLIC_ADMIN_EMAIL || '').trim().toLowerCase();
-
-const parseEmail = (value: unknown) => (typeof value === 'string' ? value : '').trim().toLowerCase();
+const hasAdminEmailConfigured = () => Boolean((process.env.ADMIN_EMAIL || '').trim());
 
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const email = parseEmail((body as { email?: unknown })?.email);
-    const adminEmail = parseAdminEmail();
-    const hasAdminEmail = adminEmail.length > 0;
-    const isAdmin = hasAdminEmail && email === adminEmail;
+    const email = normalizeEmail((body as { email?: unknown })?.email);
+    const hasAdminEmail = hasAdminEmailConfigured();
+    const isAdmin = hasAdminEmail && isAdminEmailServer(email);
 
     const payload: AdminStatusResponse = { ok: true, hasAdminEmail, isAdmin };
     return NextResponse.json(payload);
