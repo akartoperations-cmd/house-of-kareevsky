@@ -36,7 +36,25 @@ const makeIdempotencyKey = (parts: Array<string | null | undefined>) => {
 const errorResponse = (message: string, status = 400) =>
   NextResponse.json({ ok: false, error: message }, { status });
 
+const timingSafeEqualStr = (a: string, b: string) => {
+  const aBuf = Buffer.from(a);
+  const bBuf = Buffer.from(b);
+  if (aBuf.length !== bBuf.length) return false;
+  return crypto.timingSafeEqual(aBuf, bBuf);
+};
+
 export async function POST(req: Request) {
+  const expectedSecret = (process.env.PUSH_WEBHOOK_SECRET || '').trim();
+  if (!expectedSecret) {
+    console.error('[push] PUSH_WEBHOOK_SECRET missing');
+    return errorResponse('Push not configured', 500);
+  }
+
+  const providedSecret = (req.headers.get('x-push-secret') || '').trim();
+  if (!providedSecret || !timingSafeEqualStr(providedSecret, expectedSecret)) {
+    return errorResponse('Unauthorized', 401);
+  }
+
   const appId = process.env.ONESIGNAL_APP_ID || process.env.NEXT_PUBLIC_ONESIGNAL_APP_ID;
   const restKey = process.env.ONESIGNAL_REST_API_KEY;
   const adminUserId = process.env.ADMIN_USER_ID || process.env.ADMIN_EMAIL || process.env.NEXT_PUBLIC_ADMIN_USER_ID;

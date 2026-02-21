@@ -375,7 +375,10 @@ const triggerPushEvent = async (payload: PushEventPayload) => {
   try {
     await fetch('/api/push', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-push-secret': process.env.NEXT_PUBLIC_PUSH_WEBHOOK_SECRET || '',
+      },
       body: JSON.stringify(payload),
     });
   } catch (err) {
