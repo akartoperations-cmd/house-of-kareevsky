@@ -16,6 +16,9 @@ type AccessState = {
   hasActiveSubscription: boolean;
 };
 
+const ADMIN_STATUS_TTL_MS = 600_000;
+type AdminStatusCacheEntry = { value: boolean; ts: number };
+
 export function useAccessRedirect(target: AccessGuardTarget): AccessState {
   const router = useRouter();
   const pathname = usePathname();
@@ -27,23 +30,38 @@ export function useAccessRedirect(target: AccessGuardTarget): AccessState {
   });
 
   const redirectingRef = useRef(false);
-  const adminCacheRef = useRef<Record<string, boolean>>({});
+  const adminCacheRef = useRef<Record<string, AdminStatusCacheEntry>>({});
 
   const checkAdmin = useCallback(async (email: string) => {
     const normalized = normalizeEmail(email);
     if (!normalized) return false;
 
-    // Check localStorage cache first (survives reload, works offline)
+    const now = Date.now();
+    const isFresh = (entry?: AdminStatusCacheEntry | null) =>
+      Boolean(entry && typeof entry.ts === 'number' && now - entry.ts < ADMIN_STATUS_TTL_MS);
+
+    // Check in-memory cache first
+    const mem = adminCacheRef.current[normalized];
+    if (isFresh(mem)) return mem.value;
+    delete adminCacheRef.current[normalized];
+
+    // Check localStorage cache next (survives reload)
     const storageKey = `admin_status_${normalized}`;
-    if (adminCacheRef.current[normalized] !== undefined) {
-      return adminCacheRef.current[normalized];
-    }
     try {
       const cached = localStorage.getItem(storageKey);
       if (cached !== null) {
-        const val = cached === 'true';
-        adminCacheRef.current[normalized] = val;
-        return val;
+        const parsed = JSON.parse(cached) as Partial<AdminStatusCacheEntry> | null;
+        const value = typeof parsed?.value === 'boolean' ? parsed.value : null;
+        const ts = typeof parsed?.ts === 'number' ? parsed.ts : null;
+        if (value !== null && ts !== null) {
+          const entry: AdminStatusCacheEntry = { value, ts };
+          if (isFresh(entry)) {
+            adminCacheRef.current[normalized] = entry;
+            return entry.value;
+          }
+        }
+        // Expired or invalid format -> clear it
+        localStorage.removeItem(storageKey);
       }
     } catch {
       // localStorage unavailable
@@ -64,9 +82,10 @@ export function useAccessRedirect(target: AccessGuardTarget): AccessState {
       if (!res.ok) throw new Error('admin check failed');
       const data = (await res.json()) as { isAdmin?: boolean };
       const isAdmin = Boolean(data?.isAdmin);
-      adminCacheRef.current[normalized] = isAdmin;
+      const entry: AdminStatusCacheEntry = { value: isAdmin, ts: Date.now() };
+      adminCacheRef.current[normalized] = entry;
       try {
-        localStorage.setItem(storageKey, String(isAdmin));
+        localStorage.setItem(storageKey, JSON.stringify(entry));
       } catch {
         // ignore
       }
