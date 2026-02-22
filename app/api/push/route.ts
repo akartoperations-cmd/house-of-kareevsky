@@ -1,5 +1,7 @@
 import crypto from 'crypto';
 import { NextResponse } from 'next/server';
+import { getSupabaseServiceClient } from '@/app/lib/supabaseServiceClient';
+import { isAdminEmailServer } from '@/app/lib/admin.server';
 
 type PushEventType = 'admin_new_post' | 'admin_dm_to_user' | 'user_dm_to_admin' | 'new_comment_to_admin';
 
@@ -19,7 +21,37 @@ const EVENT_LABELS: Record<PushEventType, string> = {
   new_comment_to_admin: 'New comment to admin',
 };
 
+const ADMIN_ONLY_EVENTS = new Set<PushEventType>(['admin_new_post', 'admin_dm_to_user']);
+const USER_EVENTS = new Set<PushEventType>(['user_dm_to_admin', 'new_comment_to_admin']);
+
 const ONE_SIGNAL_API = 'https://api.onesignal.com/notifications';
+
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX = 10;
+
+const rateLimitMap = new Map<string, number[]>();
+
+const isRateLimited = (key: string): boolean => {
+  const now = Date.now();
+  const timestamps = rateLimitMap.get(key) ?? [];
+  const recent = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+  if (recent.length >= RATE_LIMIT_MAX) {
+    rateLimitMap.set(key, recent);
+    return true;
+  }
+  recent.push(now);
+  rateLimitMap.set(key, recent);
+  return false;
+};
+
+setInterval(() => {
+  const now = Date.now();
+  rateLimitMap.forEach((timestamps, key) => {
+    const recent = timestamps.filter((t: number) => now - t < RATE_LIMIT_WINDOW_MS);
+    if (recent.length === 0) rateLimitMap.delete(key);
+    else rateLimitMap.set(key, recent);
+  });
+}, 60_000);
 
 const toPreview = (value?: string | null, fallback = ''): string => {
   if (!value) return fallback;
@@ -36,23 +68,45 @@ const makeIdempotencyKey = (parts: Array<string | null | undefined>) => {
 const errorResponse = (message: string, status = 400) =>
   NextResponse.json({ ok: false, error: message }, { status });
 
-const timingSafeEqualStr = (a: string, b: string) => {
-  const aBuf = Buffer.from(a);
-  const bBuf = Buffer.from(b);
-  if (aBuf.length !== bBuf.length) return false;
-  return crypto.timingSafeEqual(aBuf, bBuf);
-};
-
-export async function POST(req: Request) {
-  const expectedSecret = (process.env.PUSH_WEBHOOK_SECRET || '').trim();
-  if (!expectedSecret) {
-    console.error('[push] PUSH_WEBHOOK_SECRET missing');
-    return errorResponse('Push not configured', 500);
+async function authenticateRequest(req: Request): Promise<
+  { ok: true; userId: string; email: string; isAdmin: boolean } | { ok: false; error: NextResponse }
+> {
+  const authHeader = (req.headers.get('authorization') || '').trim();
+  if (!authHeader.startsWith('Bearer ')) {
+    return { ok: false, error: errorResponse('Missing or invalid Authorization header', 401) };
   }
 
-  const providedSecret = (req.headers.get('x-push-secret') || '').trim();
-  if (!providedSecret || !timingSafeEqualStr(providedSecret, expectedSecret)) {
-    return errorResponse('Unauthorized', 401);
+  const token = authHeader.slice(7).trim();
+  if (!token) {
+    return { ok: false, error: errorResponse('Empty token', 401) };
+  }
+
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) {
+    console.error('[push] Supabase service client unavailable');
+    return { ok: false, error: errorResponse('Auth service unavailable', 500) };
+  }
+
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data?.user) {
+    return { ok: false, error: errorResponse('Invalid or expired token', 401) };
+  }
+
+  const userId = data.user.id;
+  const email = (data.user.email || '').trim().toLowerCase();
+  const isAdmin = isAdminEmailServer(email);
+
+  return { ok: true, userId, email, isAdmin };
+}
+
+export async function POST(req: Request) {
+  const auth = await authenticateRequest(req);
+  if (!auth.ok) return auth.error;
+
+  const { userId, isAdmin } = auth;
+
+  if (isRateLimited(userId)) {
+    return errorResponse('Too many requests. Please wait a moment.', 429);
   }
 
   const appId = process.env.ONESIGNAL_APP_ID || process.env.NEXT_PUBLIC_ONESIGNAL_APP_ID;
@@ -74,6 +128,13 @@ export async function POST(req: Request) {
   const { eventType, postId, toUserId, messageText, commentText, deepLink } = body || {};
   if (!eventType || !(eventType in EVENT_LABELS)) {
     return errorResponse('Unsupported event type');
+  }
+
+  if (ADMIN_ONLY_EVENTS.has(eventType) && !isAdmin) {
+    return errorResponse('Forbidden: admin-only event', 403);
+  }
+  if (USER_EVENTS.has(eventType) && isAdmin) {
+    // Admin can also trigger user events if needed; no restriction here
   }
 
   const payload: Record<string, unknown> = {
@@ -172,4 +233,3 @@ export async function POST(req: Request) {
     return errorResponse('Push send error', 500);
   }
 }
-
