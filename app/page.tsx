@@ -35,15 +35,6 @@ declare global {
   }
 }
 
-type PushEventPayload = {
-  eventType: 'admin_new_post' | 'admin_dm_to_user' | 'user_dm_to_admin' | 'new_comment_to_admin';
-  postId?: string;
-  toUserId?: string | null;
-  messageText?: string;
-  commentText?: string;
-  deepLink?: string;
-};
-
 type AdminMessage = {
   id: string;
   author: 'Kareevsky';
@@ -369,23 +360,6 @@ const friendlySupabaseError = (err: unknown): string => {
   }
 
   return supa.message || 'Unexpected error occurred.';
-};
-
-const triggerPushEvent = async (payload: PushEventPayload) => {
-  try {
-    await fetch('/api/push', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-push-secret': process.env.NEXT_PUBLIC_PUSH_WEBHOOK_SECRET || '',
-      },
-      body: JSON.stringify(payload),
-    });
-  } catch (err) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn('[push] Failed to trigger push event', err);
-    }
-  }
 };
 
 const TRANSPARENT_PIXEL =
@@ -3597,14 +3571,6 @@ export default function HomePage() {
       }
       showToast('Message sent.');
       setWriteText('');
-
-      if (!isAdmin) {
-        triggerPushEvent({
-          eventType: 'user_dm_to_admin',
-          messageText: text,
-          deepLink: '/admin/messages',
-        });
-      }
     } catch (err) {
       console.error('[data] Failed to send direct message', err);
       showToast('Failed to send message. Please try again.');
@@ -3944,21 +3910,23 @@ export default function HomePage() {
             title: createTextTitle.trim() || null,
             body_text: body,
             visibility: 'public',
+            is_published: false,
             metadata: { time_label: timeLabel },
           })
           .select()
           .single();
         if (error) throw error;
         const newPostId = (data as PostRow).id;
+
+        const { error: publishError } = await supabase
+          .from('posts')
+          .update({ is_published: true })
+          .eq('id', newPostId);
+        if (publishError) throw publishError;
+
         const mapped = mapPostRowToMessage({ ...(data as PostRow), post_media: [], comments: [] }, adminUserIdRef.current);
         setFeedMessages((prev) => [...prev, mapped]);
         queueScrollToBottom({ force: true });
-        triggerPushEvent({
-          eventType: 'admin_new_post',
-          postId: newPostId,
-          messageText: createTextTitle.trim() || createTextBody.trim(),
-          deepLink: '/?open=latest',
-        });
         showToast('Text post published.');
         setCreateTextTitle('');
         setCreateTextBody('');
@@ -3985,6 +3953,7 @@ export default function HomePage() {
               type: mediaIsVideo ? 'video' : 'photo',
               body_text: mediaCaption.trim() || null,
               visibility: 'public',
+              is_published: false,
               metadata: baseMetadata,
             })
             .select()
@@ -4070,6 +4039,7 @@ export default function HomePage() {
           const { data: updatedPost, error: updateError } = await supabase
             .from('posts')
             .update({
+              is_published: true,
               metadata: {
                 ...baseMetadata,
                 image_urls: imageUrls,
@@ -4091,12 +4061,6 @@ export default function HomePage() {
           );
           setFeedMessages((prev) => [...prev, mapped]);
           queueScrollToBottom({ force: true });
-          triggerPushEvent({
-            eventType: 'admin_new_post',
-            postId: newPostId as string,
-            messageText: mediaCaption.trim() || undefined,
-            deepLink: '/?open=latest',
-          });
           showToast(mediaIsVideo ? 'Video post published.' : `Photo post with ${uploads.length} image(s) published.`);
           setMediaFiles([]);
           setMediaPreviews([]);
@@ -4129,6 +4093,7 @@ export default function HomePage() {
               type: 'audio',
               body_text: audioFile.name || 'Audio message',
               visibility: 'public',
+              is_published: false,
               metadata: {
                 time_label: timeLabel,
               },
@@ -4168,6 +4133,7 @@ export default function HomePage() {
           const { data: updatedPost, error: updateError } = await supabase
             .from('posts')
             .update({
+              is_published: true,
               metadata: {
                 audio_url: audioUrl,
                 time_label: timeLabel,
@@ -4184,12 +4150,6 @@ export default function HomePage() {
           );
           setFeedMessages((prev) => [...prev, mapped]);
           queueScrollToBottom({ force: true });
-          triggerPushEvent({
-            eventType: 'admin_new_post',
-            postId: newPostId as string,
-            messageText: audioFile.name || 'Audio post',
-            deepLink: '/?open=latest',
-          });
           showToast('Audio post published.');
           resetAudioSelection();
         } catch (err) {
@@ -4217,6 +4177,7 @@ export default function HomePage() {
               type: 'poll',
               body_text: pollQuestionText,
               visibility: 'public',
+              is_published: false,
               metadata: {
                 poll_question: pollQuestionText,
                 poll_options: trimmedOptions.slice(0, 4),
@@ -4254,6 +4215,7 @@ export default function HomePage() {
           const { data: updatedPost, error: updateError } = await supabase
             .from('posts')
             .update({
+              is_published: true,
               metadata: {
                 poll_id: newPollId,
                 poll_question: pollQuestionText,
@@ -4290,12 +4252,6 @@ export default function HomePage() {
 
           setFeedMessages((prev) => [...prev, mapped]);
           queueScrollToBottom({ force: true });
-          triggerPushEvent({
-            eventType: 'admin_new_post',
-            postId: newPostId,
-            messageText: pollQuestionText,
-            deepLink: '/?open=latest',
-          });
           showToast('Poll published.');
           setPollQuestion('');
           setPollOptions(['', '']);
@@ -4329,20 +4285,22 @@ export default function HomePage() {
               type: 'i18n',
               body_text: 'i18n',
               visibility: 'public',
+              is_published: false,
               metadata: { i18n_pack: pack, time_label: timeLabel },
             })
             .select()
             .single();
           if (error) throw error;
+
+          const { error: publishError } = await supabase
+            .from('posts')
+            .update({ is_published: true })
+            .eq('id', (data as PostRow).id);
+          if (publishError) throw publishError;
+
           const mapped = mapPostRowToMessage({ ...(data as PostRow), post_media: [], comments: [] }, adminUserIdRef.current);
           setFeedMessages((prev) => [...prev, mapped]);
           queueScrollToBottom({ force: true });
-          triggerPushEvent({
-            eventType: 'admin_new_post',
-            postId: (data as PostRow).id,
-            messageText: english ? english[1] : 'New post',
-            deepLink: '/?open=latest',
-          });
           showToast('Multi-language post published.');
           setI18nTexts({ en: '', es: '', fr: '', it: '' });
         } else {
@@ -4374,20 +4332,22 @@ export default function HomePage() {
               type: 'i18n',
               body_text: 'i18n',
               visibility: 'public',
+              is_published: false,
               metadata: { i18n_pack: pack, time_label: timeLabel },
             })
             .select()
             .single();
           if (error) throw error;
+
+          const { error: publishError } = await supabase
+            .from('posts')
+            .update({ is_published: true })
+            .eq('id', (data as PostRow).id);
+          if (publishError) throw publishError;
+
           const mapped = mapPostRowToMessage({ ...(data as PostRow), post_media: [], comments: [] }, adminUserIdRef.current);
           setFeedMessages((prev) => [...prev, mapped]);
           queueScrollToBottom({ force: true });
-          triggerPushEvent({
-            eventType: 'admin_new_post',
-            postId: (data as PostRow).id,
-            messageText: 'New media post',
-            deepLink: '/?open=latest',
-          });
           showToast('Multi-language post published.');
           setI18nFiles({ en: [], es: [], fr: [], it: [] });
           setI18nPreviews({ en: [], es: [], fr: [], it: [] });
@@ -4518,15 +4478,6 @@ export default function HomePage() {
       });
       setCommentReply('');
       showToast('Reply published.');
-
-      if (!isAdmin) {
-        triggerPushEvent({
-          eventType: 'new_comment_to_admin',
-          postId: activeMessageId,
-          commentText: text,
-          deepLink: activeMessageId ? `/?open=post&postId=${activeMessageId}` : undefined,
-        });
-      }
     } catch (err) {
       console.error('[data] Failed to send comment', err);
       showToast('Failed to send comment.');
