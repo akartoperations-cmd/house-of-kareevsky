@@ -91,15 +91,31 @@ async function sendOneSignalPush(payload: Record<string, unknown>, idempotencyKe
 // Table handlers
 // ---------------------------------------------------------------------------
 
-async function handlePostsUpdate(record: WebhookPayload['record'], oldRecord: WebhookPayload['old_record']): Promise<void> {
-  console.log('[push][posts] entered', {
+async function handlePostsEvent(
+  type: WebhookPayload['type'],
+  record: WebhookPayload['record'],
+  oldRecord: WebhookPayload['old_record'],
+): Promise<void> {
+  const isPublished = record.is_published === true;
+  const wasPublished = oldRecord?.is_published === true;
+
+  console.log('[push][posts] event received', {
+    type,
     recordId: record.id,
     recordIsPublished: record.is_published,
+    hasOldRecord: !!oldRecord,
     oldRecordIsPublished: oldRecord?.is_published,
   });
 
-  if (oldRecord?.is_published === true || record.is_published !== true) {
-    console.log('[push][posts] skipped', 'not transition');
+  if (!isPublished) {
+    console.log('[push][posts] skipped', 'record is_published != true');
+    return;
+  }
+
+  // For UPDATE, avoid re-sending when we can see it was already published.
+  // If old_record is missing, we still send; OneSignal idempotency prevents duplicates.
+  if (type === 'UPDATE' && wasPublished) {
+    console.log('[push][posts] skipped', 'already published (old_record.is_published == true)');
     return;
   }
 
@@ -113,6 +129,12 @@ async function handlePostsUpdate(record: WebhookPayload['record'], oldRecord: We
   const body = toPreview(record.body_text, 'A new post is available.');
   const idempotencyKey = `post_publish_${record.id}`;
   const url = record.id ? `https://www.houseofkareevsky.com/?open=post&postId=${record.id}` : undefined;
+
+  console.log('[push][posts] sending', {
+    reason: type === 'INSERT' ? 'INSERT is_published=true' : wasPublished ? 'unknown' : 'UPDATE published (or old_record missing)',
+    recordId: record.id,
+    idempotencyKey,
+  });
 
   await sendOneSignalPush(
     {
@@ -217,6 +239,13 @@ async function handleDirectMessagesInsert(record: WebhookPayload['record']): Pro
 // Route handler
 // ---------------------------------------------------------------------------
 
+function normalizeTableName(table: string): string {
+  const trimmed = (table || '').trim();
+  if (!trimmed) return trimmed;
+  const lastDot = trimmed.lastIndexOf('.');
+  return lastDot >= 0 ? trimmed.slice(lastDot + 1) : trimmed;
+}
+
 export async function POST(req: Request) {
   // --- Auth: only accept valid Supabase webhook calls ---
   const expectedSecret = (process.env.SUPABASE_DB_WEBHOOK_SECRET || '').trim();
@@ -239,28 +268,19 @@ export async function POST(req: Request) {
   }
 
   const { type, table, record, old_record } = payload;
-  const payloadPartial = payload as Partial<WebhookPayload>;
-  console.log('[push] webhook payload', {
-    table,
-    type,
-    hasRecord: !!payloadPartial.record,
-    hasOldRecord: !!payloadPartial.old_record,
-    recordId: payloadPartial.record?.id,
-    recordIsPublished: payloadPartial.record?.is_published,
-    oldRecordIsPublished: payloadPartial.old_record?.is_published,
-  });
+  const normalizedTable = normalizeTableName(table);
 
   // --- Route by table + event ---
   try {
-    if (table === 'posts' && type === 'UPDATE') {
-      await handlePostsUpdate(record, old_record);
-    } else if (table === 'comments' && type === 'INSERT') {
+    if (normalizedTable === 'posts' && (type === 'INSERT' || type === 'UPDATE')) {
+      await handlePostsEvent(type, record, old_record);
+    } else if (normalizedTable === 'comments' && type === 'INSERT') {
       await handleCommentsInsert(record);
-    } else if (table === 'direct_messages' && type === 'INSERT') {
+    } else if (normalizedTable === 'direct_messages' && type === 'INSERT') {
       await handleDirectMessagesInsert(record);
     }
   } catch (err) {
-    console.error(`[push] Unhandled error processing ${table}/${type}`, err);
+    console.error(`[push] Unhandled error processing ${normalizedTable || table}/${type}`, err);
   }
 
   return NextResponse.json({ received: true }, { status: 200 });
