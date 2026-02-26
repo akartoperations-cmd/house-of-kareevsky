@@ -47,20 +47,16 @@ const timingSafeEqualStr = (a: string, b: string): boolean => {
   return crypto.timingSafeEqual(aBuf, bBuf);
 };
 
-function summarizeOneSignalTargeting(payload: Record<string, unknown>): Record<string, unknown> {
-  const keys = [
-    'target_channel',
-    'included_segments',
-    'excluded_segments',
-    'filters',
-    'include_player_ids',
-    'include_external_user_ids',
-    'include_subscription_ids',
-    'include_aliases',
-  ] as const;
+const EXPECTED_ONESIGNAL_APP_ID = '129c2cca-f76f-43e0-aa03-8c63a19557ac';
+
+function sanitizeOneSignalPayload<T extends Record<string, unknown>>(payload: T): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const k of keys) {
-    if (payload[k] !== undefined) out[k] = payload[k];
+  for (const [key, value] of Object.entries(payload)) {
+    if (key.startsWith('include_')) continue;
+    if (key === 'filters' || key === 'excluded_segments') continue;
+    if (value === undefined) continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+    out[key] = value;
   }
   return out;
 }
@@ -137,16 +133,17 @@ async function handlePostsEvent(
     return;
   }
 
-  const appId = process.env.ONESIGNAL_APP_ID;
-  if (!appId) {
-    console.log('[push][posts] skipped', 'missing ONESIGNAL_APP_ID');
-    return;
+  // App ID must match the client-side OneSignal init appId (see app/layout.tsx).
+  const envAppId = (process.env.ONESIGNAL_APP_ID || '').trim();
+  const appIdUsed = envAppId || EXPECTED_ONESIGNAL_APP_ID;
+  if (envAppId && envAppId !== EXPECTED_ONESIGNAL_APP_ID) {
+    console.error('[push][posts] ONESIGNAL_APP_ID mismatch – overriding to expected app id', {
+      envAppId,
+      expected: EXPECTED_ONESIGNAL_APP_ID,
+    });
   }
 
-  const heading = record.title || 'New Post';
-  const body = toPreview(record.body_text, 'A new post is available.');
   const idempotencyKey = `post_publish_${record.id}`;
-  const url = record.id ? `https://www.houseofkareevsky.com/?open=post&postId=${record.id}` : undefined;
 
   console.log('[push][posts] sending', {
     reason: type === 'INSERT' ? 'INSERT is_published=true' : wasPublished ? 'unknown' : 'UPDATE published (or old_record missing)',
@@ -154,21 +151,31 @@ async function handlePostsEvent(
     idempotencyKey,
   });
 
-  const oneSignalPayload = {
-    app_id: appId,
-    // Temporary: always target subscribed users segment (Web Push).
+  // IMPORTANT: Keep the posts payload strict and segment-only.
+  const rawPayload = {
+    app_id: appIdUsed,
     target_channel: 'push',
     included_segments: ['Subscribed Users'],
-    headings: { en: heading },
-    contents: { en: body },
-    ...(url ? { url } : {}),
-    data: { type: 'post', postId: record.id },
-  };
+    headings: { en: 'New post' },
+    contents: { en: 'New post published' },
+    data: { postId: record.id },
+  } satisfies Record<string, unknown>;
 
-  console.log('[push][posts] OneSignal targeting', summarizeOneSignalTargeting(oneSignalPayload));
+  const payload = sanitizeOneSignalPayload(rawPayload);
+
+  console.log('[push][posts] diag', {
+    appIdUsed,
+    restKeyPresent: !!process.env.ONESIGNAL_REST_API_KEY,
+    endpoint: ONE_SIGNAL_API,
+    target_channel: (payload as any).target_channel,
+    included_segments: (payload as any).included_segments,
+    hasIncludeKeys: Object.keys(payload).some((k) => k.startsWith('include_')),
+    hasFilters: 'filters' in payload,
+    hasExcludedSegments: 'excluded_segments' in payload,
+  });
 
   await sendOneSignalPush(
-    oneSignalPayload,
+    payload,
     idempotencyKey,
   );
 }
