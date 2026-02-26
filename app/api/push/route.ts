@@ -47,6 +47,24 @@ const timingSafeEqualStr = (a: string, b: string): boolean => {
   return crypto.timingSafeEqual(aBuf, bBuf);
 };
 
+function summarizeOneSignalTargeting(payload: Record<string, unknown>): Record<string, unknown> {
+  const keys = [
+    'target_channel',
+    'included_segments',
+    'excluded_segments',
+    'filters',
+    'include_player_ids',
+    'include_external_user_ids',
+    'include_subscription_ids',
+    'include_aliases',
+  ] as const;
+  const out: Record<string, unknown> = {};
+  for (const k of keys) {
+    if (payload[k] !== undefined) out[k] = payload[k];
+  }
+  return out;
+}
+
 function getServiceClient(): SupabaseClient | null {
   const url = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
   const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
@@ -136,15 +154,21 @@ async function handlePostsEvent(
     idempotencyKey,
   });
 
+  const oneSignalPayload = {
+    app_id: appId,
+    // Temporary: always target subscribed users segment (Web Push).
+    target_channel: 'push',
+    included_segments: ['Subscribed Users'],
+    headings: { en: heading },
+    contents: { en: body },
+    ...(url ? { url } : {}),
+    data: { type: 'post', postId: record.id },
+  };
+
+  console.log('[push][posts] OneSignal targeting', summarizeOneSignalTargeting(oneSignalPayload));
+
   await sendOneSignalPush(
-    {
-      app_id: appId,
-      included_segments: ['Subscribed Users'],
-      headings: { en: heading },
-      contents: { en: body },
-      ...(url ? { url } : {}),
-      data: { type: 'post', postId: record.id },
-    },
+    oneSignalPayload,
     idempotencyKey,
   );
 }
