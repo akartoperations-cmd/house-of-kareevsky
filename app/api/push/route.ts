@@ -48,6 +48,7 @@ const timingSafeEqualStr = (a: string, b: string): boolean => {
 };
 
 const EXPECTED_ONESIGNAL_APP_ID = '129c2cca-f76f-43e0-aa03-8c63a19557ac';
+const DEBUG_SUBSCRIPTION_ID = '0c7777a9-e6df-4811-a83a-6f95c6bb43d2';
 
 function sanitizeOneSignalPayload<T extends Record<string, unknown>>(payload: T): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -59,6 +60,43 @@ function sanitizeOneSignalPayload<T extends Record<string, unknown>>(payload: T)
     out[key] = value;
   }
   return out;
+}
+
+async function sendOneSignalDebugSubscriptionPush(payload: Record<string, unknown>, idempotencyKey: string): Promise<void> {
+  const restKey = process.env.ONESIGNAL_REST_API_KEY;
+  console.log('[push][debugSubscription] diag', {
+    appIdUsed: (payload as any).app_id,
+    restKeyPresent: !!restKey,
+    endpoint: ONE_SIGNAL_API,
+    include_subscription_ids_count: Array.isArray((payload as any).include_subscription_ids)
+      ? (payload as any).include_subscription_ids.length
+      : 0,
+  });
+
+  if (!restKey) {
+    console.error('[push][debugSubscription] ONESIGNAL_REST_API_KEY not configured – skipping send');
+    return;
+  }
+
+  try {
+    const res = await fetch(ONE_SIGNAL_API, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Basic ${restKey}`,
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: JSON.stringify(payload),
+    });
+    const text = await res.text().catch(() => '');
+    const bodyPreview = text.slice(0, 200);
+    console.log('[push][debugSubscription] OneSignal response', { status: res.status, bodyPreview });
+    if (!res.ok) {
+      console.error(`[push][debugSubscription] OneSignal ${res.status}: ${bodyPreview || 'unknown'}`);
+    }
+  } catch (err) {
+    console.error('[push][debugSubscription] OneSignal request failed', err);
+  }
 }
 
 function getServiceClient(): SupabaseClient | null {
@@ -109,6 +147,7 @@ async function handlePostsEvent(
   type: WebhookPayload['type'],
   record: WebhookPayload['record'],
   oldRecord: WebhookPayload['old_record'],
+  opts?: { debugSubscription?: boolean },
 ): Promise<void> {
   const isPublished = record.is_published === true;
   const wasPublished = oldRecord?.is_published === true;
@@ -150,6 +189,20 @@ async function handlePostsEvent(
     recordId: record.id,
     idempotencyKey,
   });
+
+  if (opts?.debugSubscription) {
+    const debugPayload = {
+      app_id: appIdUsed,
+      target_channel: 'push',
+      include_subscription_ids: [DEBUG_SUBSCRIPTION_ID],
+      headings: { en: 'Debug post push' },
+      contents: { en: 'Debug delivery test' },
+      data: { kind: 'debugSubscription', ts: Date.now() },
+    } satisfies Record<string, unknown>;
+
+    await sendOneSignalDebugSubscriptionPush(debugPayload, `debug_post_${record.id}`);
+    return;
+  }
 
   // IMPORTANT: Keep the posts payload strict and segment-only.
   const rawPayload = {
@@ -298,13 +351,25 @@ export async function POST(req: Request) {
     return NextResponse.json({ received: true, note: 'invalid json' }, { status: 200 });
   }
 
+  const url = new URL(req.url);
+  const debugSubscription = url.searchParams.get('debugSubscription') === '1';
+  if (debugSubscription) {
+    const debugKey = (req.headers.get('x-debug-key') || '').trim();
+    const expectedDebugKey = (process.env.PUSH_DEBUG_KEY || '').trim();
+    const allowed =
+      process.env.NODE_ENV !== 'production' || (expectedDebugKey && debugKey && timingSafeEqualStr(debugKey, expectedDebugKey));
+    if (!allowed) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+  }
+
   const { type, table, record, old_record } = payload;
   const normalizedTable = normalizeTableName(table);
 
   // --- Route by table + event ---
   try {
     if (normalizedTable === 'posts' && (type === 'INSERT' || type === 'UPDATE')) {
-      await handlePostsEvent(type, record, old_record);
+      await handlePostsEvent(type, record, old_record, { debugSubscription });
     } else if (normalizedTable === 'comments' && type === 'INSERT') {
       await handleCommentsInsert(record);
     } else if (normalizedTable === 'direct_messages' && type === 'INSERT') {
