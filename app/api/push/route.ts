@@ -76,9 +76,11 @@ async function sendOneSignalPush(payload: Record<string, unknown>, idempotencyKe
       },
       body: JSON.stringify(payload),
     });
+    const text = await res.text().catch(() => '');
+    const bodyPreview = text.slice(0, 200);
+    console.log('[push] OneSignal response', { status: res.status, bodyPreview });
     if (!res.ok) {
-      const text = await res.text().catch(() => 'unknown');
-      console.error(`[push] OneSignal ${res.status}: ${text}`);
+      console.error(`[push] OneSignal ${res.status}: ${bodyPreview || 'unknown'}`);
     }
   } catch (err) {
     console.error('[push] OneSignal request failed', err);
@@ -90,10 +92,22 @@ async function sendOneSignalPush(payload: Record<string, unknown>, idempotencyKe
 // ---------------------------------------------------------------------------
 
 async function handlePostsUpdate(record: WebhookPayload['record'], oldRecord: WebhookPayload['old_record']): Promise<void> {
-  if (oldRecord?.is_published === true || record.is_published !== true) return;
+  console.log('[push][posts] entered', {
+    recordId: record.id,
+    recordIsPublished: record.is_published,
+    oldRecordIsPublished: oldRecord?.is_published,
+  });
+
+  if (oldRecord?.is_published === true || record.is_published !== true) {
+    console.log('[push][posts] skipped', 'not transition');
+    return;
+  }
 
   const appId = process.env.ONESIGNAL_APP_ID;
-  if (!appId) return;
+  if (!appId) {
+    console.log('[push][posts] skipped', 'missing ONESIGNAL_APP_ID');
+    return;
+  }
 
   const heading = record.title || 'New Post';
   const body = toPreview(record.body_text, 'A new post is available.');
@@ -225,6 +239,16 @@ export async function POST(req: Request) {
   }
 
   const { type, table, record, old_record } = payload;
+  const payloadPartial = payload as Partial<WebhookPayload>;
+  console.log('[push] webhook payload', {
+    table,
+    type,
+    hasRecord: !!payloadPartial.record,
+    hasOldRecord: !!payloadPartial.old_record,
+    recordId: payloadPartial.record?.id,
+    recordIsPublished: payloadPartial.record?.is_published,
+    oldRecordIsPublished: payloadPartial.old_record?.is_published,
+  });
 
   // --- Route by table + event ---
   try {
